@@ -1,0 +1,92 @@
+import asyncio
+import sqlite3
+from datetime import date, timedelta
+from pathlib import Path
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from db import init_db, upsert_job, set_hidden
+from config import COMPANIES
+from scraper import scrape_company
+
+DB_PATH = Path(__file__).parent / "jobs.db"
+FRONTEND_DIST = Path(__file__).parent / "frontend" / "dist"
+
+app = FastAPI(title="JobTracker API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_methods=["GET", "PATCH", "POST"],
+    allow_headers=["*"],
+)
+
+
+@app.get("/api/jobs")
+def list_jobs(show_hidden: bool = False, max_age_days: int = 3):
+    if not DB_PATH.exists():
+        return []
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    if max_age_days > 0:
+        cutoff = (date.today() - timedelta(days=max_age_days)).isoformat()
+        rows = conn.execute(
+            """
+            SELECT * FROM jobs
+            WHERE (date_posted IS NULL OR date_posted >= ?)
+              AND (hidden = 0 OR ? = 1)
+            ORDER BY date_posted DESC, date_found DESC
+            """,
+            (cutoff, int(show_hidden)),
+        ).fetchall()
+    else:
+        # max_age_days=0 means all time — no date filter
+        rows = conn.execute(
+            """
+            SELECT * FROM jobs
+            WHERE (hidden = 0 OR ? = 1)
+            ORDER BY date_posted DESC, date_found DESC
+            """,
+            (int(show_hidden),),
+        ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def _run_scan() -> dict:
+    init_db()
+    total_new = 0
+    total_seen = 0
+    for company in COMPANIES:
+        jobs = scrape_company(company)
+        for job in jobs:
+            total_seen += 1
+            if upsert_job(job):
+                total_new += 1
+    return {"new_jobs": total_new, "total_seen": total_seen}
+
+
+@app.post("/api/scan")
+async def run_scan():
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, _run_scan)
+    return result
+
+
+class HidePayload(BaseModel):
+    hidden: bool
+
+
+@app.patch("/api/jobs/{job_id}")
+def patch_job(job_id: int, payload: HidePayload):
+    init_db()
+    set_hidden(job_id, payload.hidden)
+    return {"ok": True}
+
+
+# Serve built frontend in production (after `npm run build`)
+if FRONTEND_DIST.exists():
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="static")

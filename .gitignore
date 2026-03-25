@@ -1,0 +1,11 @@
+jobs.db
+.DS_Store
+__pycache__/
+*.pyc
+*.pyo
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+.env
+*.local
