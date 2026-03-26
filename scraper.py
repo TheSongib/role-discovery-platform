@@ -633,10 +633,9 @@ def scrape_ashby(slug: str, company_name: str, source_url: str) -> list[dict]:
 
         # US check via structured address field (most reliable)
         addr_country = (
-            posting.get("address", {})
-            .get("postalAddress", {})
-            .get("addressCountry", "")
-        )
+            (posting.get("address") or {})
+            .get("postalAddress") or {}
+        ).get("addressCountry", "")
         location = posting.get("location", "")
         if addr_country and addr_country != "United States":
             continue
