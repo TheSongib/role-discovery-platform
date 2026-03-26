@@ -11,15 +11,15 @@ jobs:
 
     steps:
       - name: Pull latest code
-        working-directory: /home/bcg600/jobtracker
+        working-directory: /home/bcg600/JobTracker
         run: git pull origin main
 
       - name: Install Python dependencies
-        working-directory: /home/bcg600/jobtracker
+        working-directory: /home/bcg600/JobTracker
         run: pip install -r requirements.txt
 
       - name: Install and build frontend
-        working-directory: /home/bcg600/jobtracker/frontend
+        working-directory: /home/bcg600/JobTracker/frontend
         run: |
           npm install
           npm run build
