@@ -17,6 +17,20 @@ FRONTEND_DIST = Path(__file__).parent / "frontend" / "dist"
 
 app = FastAPI(title="JobTracker API")
 
+SCAN_INTERVAL_SECONDS = 30 * 60  # 30 minutes
+
+
+@app.on_event("startup")
+async def start_scheduler():
+    async def scheduler():
+        while True:
+            await asyncio.sleep(SCAN_INTERVAL_SECONDS)
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, _run_scan)
+
+    asyncio.create_task(scheduler())
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],
