@@ -210,6 +210,24 @@ COMPANIES = [
         "board_id": "tenableinc",
     },
     {
+        "name": "1Password",
+        "careers_url": "https://jobs.ashbyhq.com/1password",
+        "ats": "ashby",
+        "board_id": "1password",
+    },
+    {
+        "name": "Vanta",
+        "careers_url": "https://www.vanta.com/careers",
+        "ats": "ashby",
+        "board_id": "vanta",
+    },
+    {
+        "name": "Drata",
+        "careers_url": "https://drata.com/company/careers",
+        "ats": "ashby",
+        "board_id": "drata",
+    },
+    {
         "name": "Redfin",
         # Pre-filtered: Engineering Group, US Remote + Remote Work Location
         "careers_url": "https://redfin.wd1.myworkdayjobs.com/redfin_careers?jobFamilyGroup=542ee2f24b9f109e0b7845c9c2aeb3cb&locations=d35c25aacf7c0178255925cc0802177c&locations=27ac60fe80e6012fd9279ed9170193c7",
