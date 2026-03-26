@@ -232,7 +232,7 @@ export default function App() {
             </div>
             <div>
               <h1 className="text-sm font-bold leading-none text-slate-900">JobTracker</h1>
-              <p className="mt-0.5 text-xs text-slate-400">Remote US · Engineering &amp; Security · v1.0.2-test</p>
+              <p className="mt-0.5 text-xs text-slate-400">Remote US · Engineering &amp; Security</p>
             </div>
           </div>
 
