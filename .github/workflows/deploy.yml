@@ -1,0 +1,28 @@
+name: Deploy to Home Server
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+
+    steps:
+      - name: Pull latest code
+        working-directory: ~/jobtracker
+        run: git pull origin main
+
+      - name: Install Python dependencies
+        working-directory: ~/jobtracker
+        run: pip install -r requirements.txt
+
+      - name: Install and build frontend
+        working-directory: ~/jobtracker/frontend
+        run: |
+          npm install
+          npm run build
+
+      - name: Restart service
+        run: sudo systemctl restart jobtracker
