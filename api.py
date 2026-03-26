@@ -21,7 +21,7 @@ FRONTEND_DIST = Path(__file__).parent / "frontend" / "dist"
 
 app = FastAPI(title="JobTracker API")
 
-SCAN_INTERVAL_SECONDS = 30 * 60  # 30 minutes
+SCAN_INTERVAL_SECONDS = 15 * 60  # 15 minutes
 
 
 @app.on_event("startup")
