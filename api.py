@@ -1,8 +1,10 @@
 import asyncio
+import os
 import sqlite3
 from datetime import date, timedelta
 from pathlib import Path
 
+import requests
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -11,6 +13,8 @@ from pydantic import BaseModel
 from db import init_db, upsert_job, set_hidden
 from config import COMPANIES
 from scraper import scrape_company
+
+NTFY_TOPIC = os.getenv("NTFY_TOPIC", "")
 
 DB_PATH = Path(__file__).parent / "jobs.db"
 FRONTEND_DIST = Path(__file__).parent / "frontend" / "dist"
@@ -70,16 +74,42 @@ def list_jobs(show_hidden: bool = False, max_age_days: int = 3):
     return [dict(r) for r in rows]
 
 
+def _notify(new_jobs: list[dict]):
+    if not NTFY_TOPIC:
+        return
+    lines = [f"{j['company']} — {j['title']}" for j in new_jobs[:10]]
+    if len(new_jobs) > 10:
+        lines.append(f"... and {len(new_jobs) - 10} more")
+    body = "\n".join(lines)
+    try:
+        requests.post(
+            f"https://ntfy.sh/{NTFY_TOPIC}",
+            data=body.encode("utf-8"),
+            headers={
+                "Title": f"{len(new_jobs)} new job{'s' if len(new_jobs) != 1 else ''} found",
+                "Priority": "default",
+                "Tags": "briefcase",
+            },
+            timeout=10,
+        )
+    except Exception:
+        pass
+
+
 def _run_scan() -> dict:
     init_db()
     total_new = 0
     total_seen = 0
+    new_jobs = []
     for company in COMPANIES:
         jobs = scrape_company(company)
         for job in jobs:
             total_seen += 1
             if upsert_job(job):
                 total_new += 1
+                new_jobs.append(job)
+    if new_jobs:
+        _notify(new_jobs)
     return {"new_jobs": total_new, "total_seen": total_seen}
 
 
