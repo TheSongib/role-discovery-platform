@@ -54,9 +54,9 @@ def list_jobs(show_hidden: bool = False, max_age_days: int = 3):
         rows = conn.execute(
             """
             SELECT * FROM jobs
-            WHERE (date_posted IS NULL OR date_posted >= ?)
+            WHERE date_found >= ?
               AND (hidden = 0 OR ? = 1)
-            ORDER BY date_posted DESC, date_found DESC
+            ORDER BY date_found DESC
             """,
             (cutoff, int(show_hidden)),
         ).fetchall()
@@ -66,7 +66,7 @@ def list_jobs(show_hidden: bool = False, max_age_days: int = 3):
             """
             SELECT * FROM jobs
             WHERE (hidden = 0 OR ? = 1)
-            ORDER BY date_posted DESC, date_found DESC
+            ORDER BY date_found DESC
             """,
             (int(show_hidden),),
         ).fetchall()
