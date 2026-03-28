@@ -84,13 +84,13 @@ def get_all_jobs(remote_only: bool = False, max_age_days: int = None) -> list[sq
         conditions.append("is_remote = 1")
     if max_age_days is not None:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).date().isoformat()
-        conditions.append(f"(date_posted IS NULL OR date_posted >= '{cutoff}')")
+        conditions.append(f"date_found >= '{cutoff}'")
 
     with get_conn() as conn:
         query = "SELECT * FROM jobs"
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
-        query += " ORDER BY date_posted DESC, date_found DESC"
+        query += " ORDER BY date_found DESC"
         return conn.execute(query).fetchall()
 
 
