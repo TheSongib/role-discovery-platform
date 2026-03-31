@@ -228,6 +228,12 @@ COMPANIES = [
         "board_id": "drata",
     },
     {
+        "name": "Pinterest",
+        "careers_url": "https://www.pinterestcareers.com/jobs/",
+        "ats": "greenhouse",
+        "board_id": "pinterest",
+    },
+    {
         "name": "Redfin",
         # Pre-filtered: Engineering Group, US Remote + Remote Work Location
         "careers_url": "https://redfin.wd1.myworkdayjobs.com/redfin_careers?jobFamilyGroup=542ee2f24b9f109e0b7845c9c2aeb3cb&locations=d35c25aacf7c0178255925cc0802177c&locations=27ac60fe80e6012fd9279ed9170193c7",
