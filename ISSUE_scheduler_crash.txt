@@ -1,0 +1,139 @@
+ISSUE: Background Scheduler Crashes on Unhandled Timeout Exception
+==================================================================
+Date Discovered: 2026-04-03
+Environment: Production server (hostingserver)
+Service: jobtracker.service (uvicorn PID 35198, running since 2026-03-31 23:46:45 UTC)
+
+
+SUMMARY
+-------
+The automated 15-minute job scan scheduler stopped running at 14:11:10 UTC on
+2026-04-03. It will not resume until the service is restarted. The root cause
+is an unhandled ReadTimeout exception from Netflix's career site that propagated
+up through the asyncio scheduler task and killed it permanently.
+
+
+WHAT HAPPENED
+-------------
+The scheduler is implemented as an asyncio background task created at service
+startup (api.py, start_scheduler / scheduler, around line 27-35). It runs an
+infinite loop: sleep 15 minutes, then call _run_scan() via run_in_executor.
+
+At 14:11:10 UTC on 2026-04-03, a network timeout occurred while scraping
+explore.jobs.netflix.net. The exception was a ReadTimeout from the requests
+library (urllib3.exceptions.ReadTimeoutError). This exception was not caught
+anywhere inside the scheduler coroutine, so it propagated all the way up and
+terminated the asyncio Task.
+
+Journal evidence:
+
+    Apr 03 14:11:10 hostingserver uvicorn[35198]: future: <Task finished
+      name='Task-3' coro=<start_scheduler.<locals>.scheduler() done,
+      defined at /home/bcg600/JobTracker/api.py:29>
+      exception=ReadTimeout(ReadTimeoutError(
+        "HTTPSConnectionPool(host='explore.jobs.netflix.net', port=443):
+         Read timed out. (read timeout=15)"))>
+    Apr 03 14:11:10 hostingserver uvicorn[35198]: TimeoutError: The read
+      operation timed out
+
+Once an asyncio Task finishes (even due to an exception), it does not restart
+automatically. The while True loop inside the task is gone. No further
+automated scans occur until the service process is restarted.
+
+The last automated scan before the crash completed normally. The only scan
+after 14:11:10 was a manual POST /api/scan HTTP request at 17:45:34 UTC.
+
+
+ROOT CAUSE (Code)
+-----------------
+In api.py, the scheduler coroutine looks like this:
+
+    async def scheduler():
+        while True:
+            await asyncio.sleep(SCAN_INTERVAL_SECONDS)
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, _run_scan)   # <-- HERE
+
+    asyncio.create_task(scheduler())
+
+The call to run_in_executor runs _run_scan() in a thread pool. If _run_scan()
+(or any scraper it calls) raises an exception that is not caught within that
+function, the exception re-raises inside the coroutine at the await line.
+Because there is no try/except in the scheduler loop, the exception propagates
+out of the coroutine, terminating the Task.
+
+Individual network errors had been handled gracefully at the per-company level
+(scraper.py logs "Error: ..." and moves on). However, the Netflix scraper uses
+a different code path (eightfold_v2 ATS type) and the specific timeout that
+occurred there was not caught before it escaped _run_scan().
+
+
+IMPACT
+------
+- Automated scans stopped at 14:11:10 UTC on 2026-04-03.
+- No new jobs are being discovered until the service is restarted or a manual
+  scan is triggered.
+- The web UI and API remain fully functional; only the background scheduler
+  is affected.
+- Service uptime is not impacted (uvicorn process is still running).
+
+
+IMMEDIATE WORKAROUND
+--------------------
+Restart the jobtracker service. This will respawn the process and re-register
+the scheduler task via the startup event handler.
+
+    sudo systemctl restart jobtracker.service
+
+The scheduler will wait 15 minutes after startup before its first run (because
+the sleep comes before the scan call in the loop). A manual scan can be
+triggered immediately after restart if needed:
+
+    curl -X POST http://localhost:8000/api/scan
+
+Note: This workaround is temporary. If another unhandled exception occurs in
+any scraper, the scheduler will die again in the same way.
+
+
+LONGER-TERM WORKAROUNDS (no code changes to production)
+--------------------------------------------------------
+
+Option 1 — External cron job
+    Add a cron entry that POSTs to /api/scan every 15 minutes. This removes
+    the dependency on the fragile in-process scheduler entirely.
+
+        */15 * * * * curl -s -X POST http://localhost:8000/api/scan
+
+    The built-in scheduler can remain in place (it would just double-run, which
+    is harmless since upsert_job is idempotent) or can be disabled by setting
+    SCAN_INTERVAL_SECONDS to a very large value via an environment variable if
+    one is added.
+
+Option 2 — Watchdog restart via cron
+    Add a cron job that checks whether a scan has run recently (e.g. by
+    querying the most recent date_found in jobs.db) and restarts the service
+    if the last scan is older than 30 minutes.
+
+Option 3 — Systemd service restart on watchdog timeout
+    Configure the systemd unit with WatchdogSec and have the application send
+    sd_notify keepalive pings. If the scheduler dies and no ping is sent within
+    the watchdog window, systemd will restart the whole service automatically.
+
+
+PROPER FIX (for development branch, do not apply on production)
+---------------------------------------------------------------
+Wrap the run_in_executor call in the scheduler loop with a broad exception
+handler so that individual scan failures log an error but allow the loop to
+continue sleeping and retrying on the next cycle:
+
+    async def scheduler():
+        while True:
+            await asyncio.sleep(SCAN_INTERVAL_SECONDS)
+            try:
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, _run_scan)
+            except Exception as exc:
+                print(f"[scheduler] scan failed, will retry next cycle: {exc}")
+
+Additionally, ensure that all per-company scrapers catch requests.exceptions.Timeout
+(and other requests exceptions) so they never escape _run_scan() in the first place.
