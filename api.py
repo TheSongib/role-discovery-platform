@@ -29,8 +29,11 @@ async def start_scheduler():
     async def scheduler():
         while True:
             await asyncio.sleep(SCAN_INTERVAL_SECONDS)
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, _run_scan)
+            try:
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, _run_scan)
+            except Exception as exc:
+                print(f"[scheduler] scan failed, will retry next cycle: {exc}")
 
     asyncio.create_task(scheduler())
 
