@@ -424,27 +424,35 @@ def scrape_eightfold_v2(careers_url: str, company_name: str) -> list[dict]:
     page_size = 10
 
     # First page — also gets total count
-    r = requests.get(api_base, params={
-        "domain": domain, "location": location,
-        "sort_by": sort_by, "num": page_size, "start": 0,
-    }, headers=HEADERS, timeout=15)
-    if r.status_code != 200:
-        print(f"  Error {r.status_code}: {r.text[:100]}")
+    try:
+        r = requests.get(api_base, params={
+            "domain": domain, "location": location,
+            "sort_by": sort_by, "num": page_size, "start": 0,
+        }, headers=HEADERS, timeout=15)
+        if r.status_code != 200:
+            print(f"  Error {r.status_code}: {r.text[:100]}")
+            return []
+        first = r.json()
+    except requests.RequestException as exc:
+        print(f"  Error: {exc}")
         return []
 
-    first = r.json()
     total = first.get("count", 0)
     all_positions.extend(first.get("positions", []))
     print(f"  Total matches: {total}")
 
     for start in range(page_size, total, page_size):
-        r = requests.get(api_base, params={
-            "domain": domain, "location": location,
-            "sort_by": sort_by, "num": page_size, "start": start,
-        }, headers=HEADERS, timeout=15)
-        if r.status_code != 200:
+        try:
+            r = requests.get(api_base, params={
+                "domain": domain, "location": location,
+                "sort_by": sort_by, "num": page_size, "start": start,
+            }, headers=HEADERS, timeout=15)
+            if r.status_code != 200:
+                break
+            all_positions.extend(r.json().get("positions", []))
+        except requests.RequestException as exc:
+            print(f"  Pagination error at start={start}: {exc}")
             break
-        all_positions.extend(r.json().get("positions", []))
 
     jobs = []
     for pos in all_positions:
