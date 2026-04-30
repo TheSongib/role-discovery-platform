@@ -2,7 +2,8 @@ import re
 import requests
 from datetime import datetime, timezone
 
-from config import TITLE_KEYWORDS, TITLE_EXCLUDE_KEYWORDS, REMOTE_KEYWORDS
+from config import REMOTE_KEYWORDS
+from keywords_store import get_keywords
 
 GREENHOUSE_API = "https://boards-api.greenhouse.io/v1/boards/{board_id}/jobs?content=true"
 LEVER_API = "https://api.lever.co/v0/postings/{company}?mode=json&limit=500"
@@ -59,10 +60,11 @@ def detect_ats(careers_url: str) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 
 def _matches_role(title: str) -> bool:
+    kws = get_keywords()
     t = title.lower()
-    if any(kw.lower() in t for kw in TITLE_EXCLUDE_KEYWORDS):
+    if any(kw.lower() in t for kw in kws["title_exclude_keywords"]):
         return False
-    return any(kw.lower() in t for kw in TITLE_KEYWORDS)
+    return any(kw.lower() in t for kw in kws["title_keywords"])
 
 
 def _is_remote(title: str, location: str, extra: str = "") -> bool:

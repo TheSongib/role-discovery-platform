@@ -138,6 +138,169 @@ function ErrorState({ message }) {
   )
 }
 
+// ── Keywords settings modal ──────────────────────────────────────────────────
+function TagList({ items, onRemove, input, setInput, onAdd, placeholder }) {
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-1.5 min-h-[2.5rem]">
+        {items.map((kw, i) => (
+          <span key={i} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
+            {kw}
+            <button
+              onClick={() => onRemove(i)}
+              className="ml-0.5 rounded-full text-slate-400 hover:text-slate-700 transition-colors"
+              aria-label={`Remove ${kw}`}
+            >
+              <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </span>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && onAdd()}
+          placeholder={placeholder}
+          className="flex-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-700 placeholder-slate-400 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+        />
+        <button
+          onClick={onAdd}
+          className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:border-slate-300 hover:text-slate-800 transition-colors"
+        >
+          Add
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function KeywordsModal({ onClose }) {
+  const [includeKws, setIncludeKws] = useState([])
+  const [excludeKws, setExcludeKws] = useState([])
+  const [includeInput, setIncludeInput] = useState('')
+  const [excludeInput, setExcludeInput] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [saveResult, setSaveResult] = useState(null) // 'ok' | 'error'
+
+  useEffect(() => {
+    fetch('/api/config/keywords')
+      .then(r => r.json())
+      .then(data => {
+        setIncludeKws(data.title_keywords ?? [])
+        setExcludeKws(data.title_exclude_keywords ?? [])
+      })
+  }, [])
+
+  function addKeyword(list, setList, inputVal, setInput) {
+    const trimmed = inputVal.trim()
+    if (!trimmed || list.map(k => k.toLowerCase()).includes(trimmed.toLowerCase())) return
+    setList(prev => [...prev, trimmed])
+    setInput('')
+  }
+
+  function removeKeyword(setList, idx) {
+    setList(prev => prev.filter((_, i) => i !== idx))
+  }
+
+  async function handleSave() {
+    setSaving(true)
+    setSaveResult(null)
+    try {
+      const r = await fetch('/api/config/keywords', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title_keywords: includeKws,
+          title_exclude_keywords: excludeKws,
+        }),
+      })
+      setSaveResult(r.ok ? 'ok' : 'error')
+    } catch {
+      setSaveResult('error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
+
+      {/* Modal */}
+      <div className="relative w-full max-w-lg rounded-2xl bg-white shadow-xl ring-1 ring-slate-200 mx-4">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-900">Keyword Filters</h2>
+            <p className="mt-0.5 text-xs text-slate-500">Changes take effect on the next scan</p>
+          </div>
+          <button onClick={onClose} className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors">
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="space-y-5 px-6 py-5">
+          <div>
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Include — title must contain at least one</p>
+            <TagList
+              items={includeKws}
+              onRemove={i => removeKeyword(setIncludeKws, i)}
+              input={includeInput}
+              setInput={setIncludeInput}
+              onAdd={() => addKeyword(includeKws, setIncludeKws, includeInput, setIncludeInput)}
+              placeholder="e.g. software engineer"
+            />
+          </div>
+
+          <div className="border-t border-slate-100 pt-4">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Exclude — title must not contain any</p>
+            <TagList
+              items={excludeKws}
+              onRemove={i => removeKeyword(setExcludeKws, i)}
+              input={excludeInput}
+              setInput={setExcludeInput}
+              onAdd={() => addKeyword(excludeKws, setExcludeKws, excludeInput, setExcludeInput)}
+              placeholder="e.g. senior"
+            />
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between border-t border-slate-100 px-6 py-4">
+          <div className="h-5">
+            {saveResult === 'ok' && (
+              <span className="text-xs font-medium text-emerald-600">Saved successfully</span>
+            )}
+            {saveResult === 'error' && (
+              <span className="text-xs font-medium text-red-500">Save failed — try again</span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:border-slate-300 transition-colors">
+              Close
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Icons ────────────────────────────────────────────────────────────────────
 function EyeSlashIcon() {
   return (
@@ -168,6 +331,7 @@ export default function App() {
   const [scanning, setScanning]     = useState(false)
   const [scanResult, setScanResult] = useState(null) // { new_jobs, total_seen }
   const [maxAge, setMaxAge]         = useState(3)
+  const [showSettings, setShowSettings] = useState(false)
 
   const AGE_OPTIONS = [
     { label: '24 hours', value: 1 },
@@ -220,6 +384,8 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900">
 
+      {showSettings && <KeywordsModal onClose={() => setShowSettings(false)} />}
+
       {/* ── Header ── */}
       <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/90 backdrop-blur-sm">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-3.5">
@@ -270,6 +436,19 @@ export default function App() {
                     : 'No new jobs'}
               </span>
             )}
+
+            {/* Settings button */}
+            <button
+              onClick={() => setShowSettings(s => !s)}
+              title="Keyword filters"
+              className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-500 shadow-sm transition-colors hover:border-slate-300 hover:text-slate-700"
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            </button>
 
             {/* Show hidden toggle */}
             <button

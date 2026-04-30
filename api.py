@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from db import init_db, upsert_job, set_hidden
 from config import COMPANIES
 from scraper import scrape_company
+from keywords_store import get_keywords, save_keywords
 
 NTFY_TOPIC = os.getenv("NTFY_TOPIC", "")
 
@@ -59,7 +60,7 @@ def list_jobs(show_hidden: bool = False, max_age_days: int = 3):
             SELECT * FROM jobs
             WHERE date_found >= ?
               AND (hidden = 0 OR ? = 1)
-            ORDER BY date_found DESC
+            ORDER BY DATE(date_found) DESC, date_posted DESC
             """,
             (cutoff, int(show_hidden)),
         ).fetchall()
@@ -69,7 +70,7 @@ def list_jobs(show_hidden: bool = False, max_age_days: int = 3):
             """
             SELECT * FROM jobs
             WHERE (hidden = 0 OR ? = 1)
-            ORDER BY date_found DESC
+            ORDER BY DATE(date_found) DESC, date_posted DESC
             """,
             (int(show_hidden),),
         ).fetchall()
@@ -131,6 +132,22 @@ class HidePayload(BaseModel):
 def patch_job(job_id: int, payload: HidePayload):
     init_db()
     set_hidden(job_id, payload.hidden)
+    return {"ok": True}
+
+
+@app.get("/api/config/keywords")
+def get_keyword_config():
+    return get_keywords()
+
+
+class KeywordsPayload(BaseModel):
+    title_keywords: list[str]
+    title_exclude_keywords: list[str]
+
+
+@app.put("/api/config/keywords")
+def update_keyword_config(payload: KeywordsPayload):
+    save_keywords(payload.title_keywords, payload.title_exclude_keywords)
     return {"ok": True}
 
 

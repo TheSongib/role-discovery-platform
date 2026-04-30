@@ -249,6 +249,7 @@ TITLE_EXCLUDE_KEYWORDS = [
     "director",
     "architect",
     "manager",
+    "senior"
 ]
 
 # Job title must contain at least one of these (case-insensitive)
