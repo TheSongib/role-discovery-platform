@@ -41,8 +41,8 @@ async def start_scheduler():
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
-    allow_methods=["GET", "PATCH", "POST"],
+    allow_origins=["*"],
+    allow_methods=["GET", "PATCH", "POST", "PUT"],
     allow_headers=["*"],
 )
 
