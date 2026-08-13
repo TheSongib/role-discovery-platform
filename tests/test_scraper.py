@@ -131,6 +131,28 @@ class EightfoldNavigationTests(unittest.TestCase):
 
 class AshbyRemoteFilteringTests(unittest.TestCase):
     @patch("scraper.requests.get")
+    def test_distributed_in_title_does_not_make_onsite_job_remote(self, mock_get):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "jobs": [{
+                "title": "Software Engineer, Distributed Data Systems - Robotics",
+                "location": "San Francisco",
+                "workplaceType": None,
+                "isRemote": None,
+                "address": {
+                    "postalAddress": {"addressCountry": "United States"},
+                },
+                "jobUrl": "https://example.com/jobs/onsite-distributed-systems",
+            }],
+        }
+        mock_get.return_value = response
+
+        jobs = scrape_ashby("openai", "OpenAI", "https://jobs.ashbyhq.com/openai")
+
+        self.assertEqual(jobs, [])
+
+    @patch("scraper.requests.get")
     def test_explicit_non_remote_workplace_overrides_remote_flag(self, mock_get):
         response = Mock()
         response.raise_for_status.return_value = None

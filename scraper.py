@@ -708,7 +708,9 @@ def scrape_ashby(slug: str, company_name: str, source_url: str) -> list[dict]:
         if workplace in ("hybrid", "onsite", "on-site"):
             continue
         if not is_remote_flag and workplace != "remote":
-            if not _is_remote(title, location):
+            # Fall back to location text only. A title such as "Distributed
+            # Data Systems" describes the technology, not a remote workplace.
+            if not _is_remote("", location):
                 continue
 
         job_url = posting.get("jobUrl") or posting.get("applyUrl") or ""
