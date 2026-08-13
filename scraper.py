@@ -72,19 +72,16 @@ def _is_remote(title: str, location: str, extra: str = "") -> bool:
     return any(kw.lower() in haystack for kw in REMOTE_KEYWORDS)
 
 
-US_LOCATION_KEYWORDS = ["us", "u.s.", "united states", "usa"]
-# Words that contain "us" but are NOT US locations
-US_FALSE_POSITIVES = ["plus", "focus", "various", "campus", "status", "bonus",
-                      "discuss", "census", "nexus", "radius", "chorus", "virus",
-                      "surplus", "versus", "genius", "serious", "itious", "tuous"]
+US_LOCATION_PATTERNS = [
+    re.compile(r"\bunited\s+states\b", re.IGNORECASE),
+    re.compile(r"(?<![a-z0-9])u\.?s\.?(?![a-z0-9])", re.IGNORECASE),
+    re.compile(r"\busa\b", re.IGNORECASE),
+]
+
 
 def _is_us_workable(location: str) -> bool:
     """Return True if the location string indicates a US-based or US-remote role."""
-    loc = location.lower().strip()
-    # Reject known false positives first
-    if any(fp in loc for fp in US_FALSE_POSITIVES):
-        return False
-    return any(kw in loc for kw in US_LOCATION_KEYWORDS)
+    return any(pattern.search(location) for pattern in US_LOCATION_PATTERNS)
 
 
 def _now() -> str:
@@ -405,6 +402,21 @@ def scrape_eightfold(careers_url: str, company_name: str) -> list[dict]:
 # Eightfold v2 (public API — used by Netflix and others)
 # ---------------------------------------------------------------------------
 
+def _is_eightfold_v2_remote(position: dict) -> bool:
+    """Return whether an Eightfold v2 position has listing-level remote evidence."""
+    custom_fields = (
+        (position.get("custom_JD") or {}).get("data_fields") or {}
+    )
+    work_types = custom_fields.get("work_type") or []
+    if isinstance(work_types, str):
+        work_types = [work_types]
+    if work_types:
+        return any("remote" in str(value).lower() for value in work_types)
+
+    locations = " ".join(position.get("locations") or [])
+    return _is_remote(position.get("name", ""), locations)
+
+
 def scrape_eightfold_v2(careers_url: str, company_name: str) -> list[dict]:
     """
     Some Eightfold tenants expose /api/apply/v2/jobs publicly (no browser auth).
@@ -465,6 +477,26 @@ def scrape_eightfold_v2(careers_url: str, company_name: str) -> list[dict]:
         raw_locs = pos.get("locations", [])
         location_str = raw_locs[0] if raw_locs else ""
         if not _is_us_workable(location_str):
+            continue
+
+        # Netflix's remote search can return onsite jobs with a misleading
+        # work_location_option of "remote_local" and even stale remote location
+        # text. Verify the authoritative Work Type from every matching detail.
+        pos_id = pos.get("id", "")
+        if not pos_id:
+            continue
+        try:
+            detail_response = requests.get(
+                f"{api_base}/{pos_id}",
+                params={"domain": domain},
+                headers=HEADERS,
+                timeout=15,
+            )
+            detail_response.raise_for_status()
+            if not _is_eightfold_v2_remote(detail_response.json()):
+                continue
+        except requests.RequestException as exc:
+            print(f"  Could not verify work type for {pos_id}: {exc}")
             continue
 
         job_url = pos.get("canonicalPositionUrl") or ""
@@ -653,9 +685,11 @@ def scrape_ashby(slug: str, company_name: str, source_url: str) -> list[dict]:
             continue
 
         # Remote check — Ashby provides workplaceType and isRemote
-        workplace = posting.get("workplaceType") or ""
+        workplace = (posting.get("workplaceType") or "").lower().strip()
         is_remote_flag = posting.get("isRemote", False)
-        if not is_remote_flag and workplace.lower() not in ("remote", "hybrid"):
+        if workplace in ("hybrid", "onsite", "on-site"):
+            continue
+        if not is_remote_flag and workplace != "remote":
             if not _is_remote(title, location):
                 continue
 
