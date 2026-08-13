@@ -106,7 +106,11 @@ def _run_scan() -> dict:
     total_seen = 0
     new_jobs = []
     for company in COMPANIES:
-        jobs = scrape_company(company)
+        try:
+            jobs = scrape_company(company)
+        except Exception as exc:
+            print(f"[{company['name']}] scan failed, continuing: {exc}")
+            continue
         for job in jobs:
             total_seen += 1
             if upsert_job(job):

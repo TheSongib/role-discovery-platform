@@ -4,6 +4,7 @@ from unittest.mock import Mock, patch
 from scraper import (
     _is_us_workable,
     scrape_ashby,
+    scrape_eightfold,
     scrape_eightfold_v2,
     scrape_greenhouse,
 )
@@ -84,7 +85,73 @@ class GreenhouseRemoteFilteringTests(unittest.TestCase):
         self.assertEqual(len(jobs), 1)
 
 
+class EightfoldNavigationTests(unittest.TestCase):
+    @patch("playwright.sync_api.sync_playwright")
+    def test_navigation_does_not_wait_for_network_idle(self, mock_playwright):
+        position = {
+            "name": "Software Engineer",
+            "locations": ["United States"],
+            "positionUrl": "/careers/job/123",
+            "postedTs": 1745366400,
+        }
+        response = Mock()
+        response.url = "https://apply.careers.microsoft.com/api/pcsx/search?start=0"
+        response.json.return_value = {
+            "data": {"count": 1, "positions": [position]},
+        }
+
+        page = Mock()
+        page.on.side_effect = lambda event, handler: setattr(page, "response_handler", handler)
+        page.wait_for_event.return_value = response
+        browser = Mock()
+        browser.new_page.return_value = page
+        playwright = Mock()
+        playwright.chromium.launch.return_value = browser
+        context = Mock()
+        context.__enter__ = Mock(return_value=playwright)
+        context.__exit__ = Mock(return_value=False)
+        mock_playwright.return_value = context
+
+        jobs = scrape_eightfold(
+            "https://apply.careers.microsoft.com/careers?location=United+States",
+            "Microsoft",
+        )
+
+        page.goto.assert_called_once_with(
+            "https://apply.careers.microsoft.com/careers?location=United+States",
+            wait_until="domcontentloaded",
+            timeout=30000,
+        )
+        page.wait_for_event.assert_called_once()
+        self.assertEqual(page.wait_for_event.call_args.args, ("response",))
+        self.assertEqual(page.wait_for_event.call_args.kwargs["timeout"], 30000)
+        self.assertTrue(page.wait_for_event.call_args.kwargs["predicate"](response))
+        self.assertEqual(len(jobs), 1)
+
+
 class AshbyRemoteFilteringTests(unittest.TestCase):
+    @patch("scraper.requests.get")
+    def test_distributed_in_title_does_not_make_onsite_job_remote(self, mock_get):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "jobs": [{
+                "title": "Software Engineer, Distributed Data Systems - Robotics",
+                "location": "San Francisco",
+                "workplaceType": None,
+                "isRemote": None,
+                "address": {
+                    "postalAddress": {"addressCountry": "United States"},
+                },
+                "jobUrl": "https://example.com/jobs/onsite-distributed-systems",
+            }],
+        }
+        mock_get.return_value = response
+
+        jobs = scrape_ashby("openai", "OpenAI", "https://jobs.ashbyhq.com/openai")
+
+        self.assertEqual(jobs, [])
+
     @patch("scraper.requests.get")
     def test_explicit_non_remote_workplace_overrides_remote_flag(self, mock_get):
         response = Mock()

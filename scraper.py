@@ -315,6 +315,7 @@ def scrape_eightfold(careers_url: str, company_name: str) -> list[dict]:
     so we only apply title keyword matching on top.
     """
     from urllib.parse import urlparse
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
     from playwright.sync_api import sync_playwright
 
     parsed = urlparse(careers_url)
@@ -341,7 +342,24 @@ def scrape_eightfold(careers_url: str, company_name: str) -> list[dict]:
                     pass
 
         page.on("response", handle_response)
-        page.goto(careers_url, wait_until="networkidle", timeout=30000)
+        # Eightfold pages keep background requests alive indefinitely. Waiting
+        # only for the DOM avoids false navigation timeouts while the response
+        # listener above captures the search API payload.
+        page.goto(careers_url, wait_until="domcontentloaded", timeout=30000)
+
+        # The SPA can issue its search request just after DOMContentLoaded. Wait
+        # for that response specifically instead of waiting for all network
+        # traffic to become idle.
+        if not search_api_base:
+            try:
+                search_response = page.wait_for_event(
+                    "response",
+                    predicate=lambda resp: "/api/pcsx/search" in resp.url,
+                    timeout=30000,
+                )
+                handle_response(search_response)
+            except PlaywrightTimeoutError:
+                pass
 
         if not search_api_base:
             print("  Could not locate search API — page may require login.")
@@ -690,7 +708,9 @@ def scrape_ashby(slug: str, company_name: str, source_url: str) -> list[dict]:
         if workplace in ("hybrid", "onsite", "on-site"):
             continue
         if not is_remote_flag and workplace != "remote":
-            if not _is_remote(title, location):
+            # Fall back to location text only. A title such as "Distributed
+            # Data Systems" describes the technology, not a remote workplace.
+            if not _is_remote("", location):
                 continue
 
         job_url = posting.get("jobUrl") or posting.get("applyUrl") or ""
