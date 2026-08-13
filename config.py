@@ -240,6 +240,60 @@ COMPANIES = [
         "ats": "workday",
         "us_only": True,
     },
+    {
+        "name": "DoorDash",
+        "careers_url": "https://job-boards.greenhouse.io/doordashusa",
+        "ats": "greenhouse",
+        "board_id": "doordashusa",
+    },
+    {
+        "name": "OpenAI",
+        "careers_url": "https://jobs.ashbyhq.com/openai",
+        "ats": "ashby",
+        "board_id": "openai",
+    },
+    {
+        "name": "Tailscale",
+        "careers_url": "https://job-boards.greenhouse.io/tailscale",
+        "ats": "greenhouse",
+        "board_id": "tailscale",
+    },
+    {
+        "name": "MongoDB",
+        "careers_url": "https://www.mongodb.com/careers/jobs",
+        "ats": "greenhouse",
+        "board_id": "mongodb",
+    },
+    {
+        "name": "Chime",
+        "careers_url": "https://boards.greenhouse.io/chime",
+        "ats": "greenhouse",
+        "board_id": "chime",
+    },
+    {
+        "name": "Discord",
+        "careers_url": "https://discord.com/jobs",
+        "ats": "greenhouse",
+        "board_id": "discord",
+    },
+    {
+        "name": "Samsara",
+        "careers_url": "https://www.samsara.com/company/careers/roles",
+        "ats": "greenhouse",
+        "board_id": "samsara",
+    },
+    {
+        "name": "Temporal",
+        "careers_url": "https://temporal.io/careers",
+        "ats": "greenhouse",
+        "board_id": "temporaltechnologies",
+    },
+    {
+        "name": "Mercury",
+        "careers_url": "https://mercury.com/jobs",
+        "ats": "greenhouse",
+        "board_id": "mercury",
+    },
 ]
 
 # Job titles containing any of these are excluded (case-insensitive)
