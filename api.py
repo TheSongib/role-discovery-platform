@@ -1,7 +1,7 @@
 import asyncio
 import os
 import sqlite3
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
@@ -10,7 +10,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from db import init_db, upsert_job, set_hidden
+from db import (
+    create_scan_run,
+    finish_scan_run,
+    get_latest_scan,
+    init_db,
+    record_company_scan_result,
+    set_hidden,
+    upsert_job,
+)
 from config import COMPANIES
 from scraper import scrape_company
 from keywords_store import get_keywords, save_keywords
@@ -32,7 +40,7 @@ async def start_scheduler():
             await asyncio.sleep(SCAN_INTERVAL_SECONDS)
             try:
                 loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, _run_scan)
+                await loop.run_in_executor(None, _run_scan, "scheduled")
             except Exception as exc:
                 print(f"[scheduler] scan failed, will retry next cycle: {exc}")
 
@@ -100,32 +108,91 @@ def _notify(new_jobs: list[dict]):
         pass
 
 
-def _run_scan() -> dict:
+def _run_scan(trigger: str = "manual") -> dict:
     init_db()
+    scan_id = create_scan_run(trigger, len(COMPANIES))
     total_new = 0
     total_seen = 0
+    successful_companies = 0
+    failed_companies = 0
     new_jobs = []
     for company in COMPANIES:
+        company_started_at = datetime.now(timezone.utc).isoformat()
+        company_new = 0
         try:
             jobs = scrape_company(company)
+            for job in jobs:
+                total_seen += 1
+                if upsert_job(job):
+                    total_new += 1
+                    company_new += 1
+                    new_jobs.append(job)
         except Exception as exc:
-            print(f"[{company['name']}] scan failed, continuing: {exc}")
+            failed_companies += 1
+            error = f"{type(exc).__name__}: {exc}"
+            print(f"[{company['name']}] scan failed, continuing: {error}")
+            record_company_scan_result(
+                scan_id=scan_id,
+                company=company["name"],
+                ats=company.get("ats", "unknown"),
+                status="failed",
+                jobs_seen=0,
+                new_jobs=0,
+                error=error[:2000],
+                started_at=company_started_at,
+            )
             continue
-        for job in jobs:
-            total_seen += 1
-            if upsert_job(job):
-                total_new += 1
-                new_jobs.append(job)
+
+        successful_companies += 1
+        record_company_scan_result(
+            scan_id=scan_id,
+            company=company["name"],
+            ats=company.get("ats", "unknown"),
+            status="success",
+            jobs_seen=len(jobs),
+            new_jobs=company_new,
+            error=None,
+            started_at=company_started_at,
+        )
+
+    if failed_companies == 0:
+        status = "success"
+    elif successful_companies == 0:
+        status = "failed"
+    else:
+        status = "partial"
+
+    finish_scan_run(
+        scan_id=scan_id,
+        status=status,
+        successful_companies=successful_companies,
+        failed_companies=failed_companies,
+        total_seen=total_seen,
+        new_jobs=total_new,
+    )
     if new_jobs:
         _notify(new_jobs)
-    return {"new_jobs": total_new, "total_seen": total_seen}
+    return {
+        "scan_id": scan_id,
+        "status": status,
+        "new_jobs": total_new,
+        "total_seen": total_seen,
+        "successful_companies": successful_companies,
+        "failed_companies": failed_companies,
+    }
 
 
 @app.post("/api/scan")
 async def run_scan():
     loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(None, _run_scan)
+    result = await loop.run_in_executor(None, _run_scan, "manual")
     return result
+
+
+@app.get("/api/scans/latest")
+def latest_scan():
+    init_db()
+    return get_latest_scan()
 
 
 class HidePayload(BaseModel):

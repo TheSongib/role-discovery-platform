@@ -1,14 +1,25 @@
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from typing import Iterator
 
-DB_PATH = Path("jobs.db")
+DB_PATH = Path(__file__).parent / "jobs.db"
 
 
-def get_conn() -> sqlite3.Connection:
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+@contextmanager
+def get_conn() -> Iterator[sqlite3.Connection]:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    return conn
+    conn.execute("PRAGMA foreign_keys = ON")
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def init_db():
@@ -40,7 +51,154 @@ def init_db():
             except sqlite3.OperationalError:
                 pass  # Column already exists
         conn.execute("UPDATE jobs SET last_seen = date_found WHERE last_seen IS NULL")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS scan_runs (
+                id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+                trigger              TEXT NOT NULL,
+                status               TEXT NOT NULL DEFAULT 'running',
+                started_at           TEXT NOT NULL,
+                finished_at          TEXT,
+                total_companies      INTEGER NOT NULL DEFAULT 0,
+                successful_companies INTEGER NOT NULL DEFAULT 0,
+                failed_companies     INTEGER NOT NULL DEFAULT 0,
+                total_seen           INTEGER NOT NULL DEFAULT 0,
+                new_jobs             INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS company_scan_results (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                scan_id     INTEGER NOT NULL,
+                company     TEXT NOT NULL,
+                ats         TEXT,
+                status      TEXT NOT NULL,
+                jobs_seen   INTEGER NOT NULL DEFAULT 0,
+                new_jobs    INTEGER NOT NULL DEFAULT 0,
+                error       TEXT,
+                started_at  TEXT NOT NULL,
+                finished_at TEXT NOT NULL,
+                FOREIGN KEY (scan_id) REFERENCES scan_runs(id) ON DELETE CASCADE,
+                UNIQUE(scan_id, company)
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_company_scan_results_scan_id "
+            "ON company_scan_results(scan_id)"
+        )
         conn.commit()
+
+
+def create_scan_run(trigger: str, total_companies: int) -> int:
+    with get_conn() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO scan_runs (trigger, status, started_at, total_companies)
+            VALUES (?, 'running', ?, ?)
+            """,
+            (trigger, _utc_now(), total_companies),
+        )
+        conn.commit()
+        return cursor.lastrowid
+
+
+def record_company_scan_result(
+    scan_id: int,
+    company: str,
+    ats: str,
+    status: str,
+    jobs_seen: int,
+    new_jobs: int,
+    error: str | None,
+    started_at: str,
+):
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO company_scan_results
+                (scan_id, company, ats, status, jobs_seen, new_jobs, error,
+                 started_at, finished_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                scan_id,
+                company,
+                ats,
+                status,
+                jobs_seen,
+                new_jobs,
+                error,
+                started_at,
+                _utc_now(),
+            ),
+        )
+        conn.commit()
+
+
+def finish_scan_run(
+    scan_id: int,
+    status: str,
+    successful_companies: int,
+    failed_companies: int,
+    total_seen: int,
+    new_jobs: int,
+):
+    with get_conn() as conn:
+        conn.execute(
+            """
+            UPDATE scan_runs
+            SET status = ?, finished_at = ?, successful_companies = ?,
+                failed_companies = ?, total_seen = ?, new_jobs = ?
+            WHERE id = ?
+            """,
+            (
+                status,
+                _utc_now(),
+                successful_companies,
+                failed_companies,
+                total_seen,
+                new_jobs,
+                scan_id,
+            ),
+        )
+        conn.commit()
+
+
+def get_latest_scan() -> dict | None:
+    with get_conn() as conn:
+        run = conn.execute(
+            "SELECT * FROM scan_runs ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if run is None:
+            return None
+
+        companies = conn.execute(
+            """
+            SELECT company, ats, status, jobs_seen, new_jobs, error,
+                   started_at, finished_at
+            FROM company_scan_results
+            WHERE scan_id = ?
+            ORDER BY CASE WHEN status = 'failed' THEN 0 ELSE 1 END,
+                     company COLLATE NOCASE
+            """,
+            (run["id"],),
+        ).fetchall()
+
+        result = dict(run)
+        result["companies"] = [dict(company) for company in companies]
+        if result["status"] == "running":
+            result["successful_companies"] = sum(
+                company["status"] == "success" for company in companies
+            )
+            result["failed_companies"] = sum(
+                company["status"] == "failed" for company in companies
+            )
+            result["total_seen"] = sum(
+                company["jobs_seen"] for company in companies
+            )
+            result["new_jobs"] = sum(
+                company["new_jobs"] for company in companies
+            )
+        return result
 
 
 def upsert_job(job: dict) -> bool:

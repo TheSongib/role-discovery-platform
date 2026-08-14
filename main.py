@@ -10,29 +10,90 @@ Usage:
   python main.py --list                 # print all stored jobs to terminal
 """
 import argparse
+from datetime import datetime, timezone
 
 from config import COMPANIES
-from db import init_db, upsert_job, get_all_jobs
+from db import (
+    create_scan_run,
+    finish_scan_run,
+    get_all_jobs,
+    init_db,
+    record_company_scan_result,
+    upsert_job,
+)
 from export import export_csv, export_json
 from scraper import scrape_company
 
 
 def cmd_scrape(export_fmt: str | None):
     init_db()
+    scan_id = create_scan_run("cli", len(COMPANIES))
     total_new = 0
+    total_seen = 0
+    successful_companies = 0
+    failed_companies = 0
 
     for company in COMPANIES:
-        jobs = scrape_company(company)
+        company_started_at = datetime.now(timezone.utc).isoformat()
         new_count = 0
-        for job in jobs:
-            if upsert_job(job):
-                new_count += 1
-                print(f"    + {job['title']}  |  {job['location']}")
+        try:
+            jobs = scrape_company(company)
+            for job in jobs:
+                total_seen += 1
+                if upsert_job(job):
+                    new_count += 1
+                    print(f"    + {job['title']}  |  {job['location']}")
+        except Exception as exc:
+            failed_companies += 1
+            error = f"{type(exc).__name__}: {exc}"
+            print(f"  Scan failed: {error}")
+            record_company_scan_result(
+                scan_id=scan_id,
+                company=company["name"],
+                ats=company.get("ats", "unknown"),
+                status="failed",
+                jobs_seen=0,
+                new_jobs=0,
+                error=error[:2000],
+                started_at=company_started_at,
+            )
+            continue
+
         skipped = len(jobs) - new_count
         print(f"  {len(jobs)} matching, {new_count} new, {skipped} already stored.")
         total_new += new_count
+        successful_companies += 1
+        record_company_scan_result(
+            scan_id=scan_id,
+            company=company["name"],
+            ats=company.get("ats", "unknown"),
+            status="success",
+            jobs_seen=len(jobs),
+            new_jobs=new_count,
+            error=None,
+            started_at=company_started_at,
+        )
 
-    print(f"\nDone. Total new jobs added: {total_new}")
+    if failed_companies == 0:
+        status = "success"
+    elif successful_companies == 0:
+        status = "failed"
+    else:
+        status = "partial"
+
+    finish_scan_run(
+        scan_id=scan_id,
+        status=status,
+        successful_companies=successful_companies,
+        failed_companies=failed_companies,
+        total_seen=total_seen,
+        new_jobs=total_new,
+    )
+
+    print(
+        f"\nDone ({status}). Total new jobs added: {total_new}. "
+        f"Companies: {successful_companies} succeeded, {failed_companies} failed."
+    )
 
     if export_fmt == "csv":
         export_csv()

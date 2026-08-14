@@ -1,7 +1,10 @@
 import unittest
 from unittest.mock import Mock, patch
 
+import requests
+
 from scraper import (
+    ScrapeError,
     _is_us_workable,
     scrape_ashby,
     scrape_eightfold,
@@ -50,6 +53,17 @@ class GreenhouseRemoteFilteringTests(unittest.TestCase):
             "metadata": None,
             "first_published": "2026-07-06T11:43:23-04:00",
         }
+
+    @patch("scraper.requests.get")
+    def test_request_failure_is_reported_as_a_failed_scan(self, mock_get):
+        mock_get.side_effect = requests.Timeout("request timed out")
+
+        with self.assertRaisesRegex(ScrapeError, "request timed out"):
+            scrape_greenhouse(
+                "oura",
+                "Oura",
+                "https://ouraring.com/careers",
+            )
 
     @patch("scraper.requests.get")
     def test_rejects_tenable_sydney_office_listing(self, mock_get):

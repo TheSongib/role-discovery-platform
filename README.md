@@ -9,6 +9,7 @@ A personal job board scraper that monitors company career pages for remote US en
 - Excludes senior/leadership titles (staff, principal, director, architect, manager)
 - Stores results in a local SQLite database with deduplication — `date_found` is never overwritten on re-runs
 - Tracks `last_seen` so you know if a job is still active
+- Records every scan and each company's success or failure so broken sources are visible
 - Serves a React frontend with live data, a one-click scan button, and the ability to hide jobs you've already applied to or aren't interested in
 
 ## Companies tracked
@@ -179,3 +180,13 @@ Jobs are stored in `jobs.db` (SQLite). Key fields:
 | `hidden` | Set to 1 when hidden from the UI |
 
 `jobs.db` is local only — do not commit it to git.
+
+## Scan status
+
+The dashboard shows the latest manual, scheduled, or CLI scan as `running`,
+`success`, `partial`, or `failed`. Expand **View details** to see each company's
+ATS, matching-job count, and error message. The same data is available from:
+
+```text
+GET /api/scans/latest
+```
