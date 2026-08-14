@@ -322,6 +322,90 @@ function EyeIcon() {
   )
 }
 
+function ScanStatusPanel({ scan }) {
+  const [expanded, setExpanded] = useState(false)
+
+  if (!scan) {
+    return (
+      <div className="rounded-xl border border-slate-200 bg-white px-5 py-4 text-sm text-slate-500 shadow-sm">
+        No scans have been recorded yet.
+      </div>
+    )
+  }
+
+  const failed = (scan.companies ?? []).filter(company => company.status === 'failed')
+  const completed = (scan.companies ?? []).length
+  const isRunning = scan.status === 'running'
+  const statusStyle = {
+    success: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+    partial: 'bg-amber-50 text-amber-700 ring-amber-200',
+    failed: 'bg-red-50 text-red-700 ring-red-200',
+    running: 'bg-blue-50 text-blue-700 ring-blue-200',
+  }[scan.status] ?? 'bg-slate-100 text-slate-700 ring-slate-200'
+
+  const summary = isRunning
+    ? `${completed} of ${scan.total_companies} companies completed`
+    : scan.status === 'success'
+      ? `All ${scan.total_companies} companies returned successfully`
+      : `${scan.successful_companies} of ${scan.total_companies} companies returned successfully`
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold capitalize ring-1 ring-inset ${statusStyle}`}>
+            {scan.status}
+          </span>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-slate-800">{summary}</p>
+            <p className="mt-0.5 text-xs text-slate-400">
+              {scan.trigger} scan · {relativeDate(scan.finished_at ?? scan.started_at)} · {scan.total_seen} matching jobs
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={() => setExpanded(value => !value)}
+          className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-800"
+        >
+          {expanded ? 'Hide details' : 'View details'}
+        </button>
+      </div>
+
+      {failed.length > 0 && !expanded && (
+        <div className="border-t border-amber-100 bg-amber-50/60 px-5 py-3 text-xs text-amber-800">
+          Failed: {failed.map(company => company.company).join(', ')}
+        </div>
+      )}
+
+      {expanded && (
+        <div className="max-h-80 overflow-y-auto border-t border-slate-100">
+          {(scan.companies ?? []).map(company => (
+            <div key={company.company} className="flex items-start justify-between gap-4 border-b border-slate-50 px-5 py-3 last:border-0">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-slate-700">
+                  {company.company}
+                  <span className="ml-2 text-xs font-normal text-slate-400">{company.ats}</span>
+                </p>
+                {company.error && (
+                  <p className="mt-1 break-words text-xs text-red-600">{company.error}</p>
+                )}
+              </div>
+              <div className="flex shrink-0 items-center gap-3 text-xs">
+                {company.status === 'success' && (
+                  <span className="text-slate-400">{company.jobs_seen} matching</span>
+                )}
+                <span className={company.status === 'success' ? 'font-medium text-emerald-600' : 'font-medium text-red-600'}>
+                  {company.status}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main app ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [jobs, setJobs]             = useState([])
@@ -332,6 +416,7 @@ export default function App() {
   const [scanResult, setScanResult] = useState(null) // { new_jobs, total_seen }
   const [maxAge, setMaxAge]         = useState(3)
   const [showSettings, setShowSettings] = useState(false)
+  const [latestScan, setLatestScan] = useState(null)
 
   const AGE_OPTIONS = [
     { label: '24 hours', value: 1 },
@@ -342,6 +427,7 @@ export default function App() {
 
   function loadJobs(age) {
     setLoading(true)
+    setError(null)
     fetch(`/api/jobs?show_hidden=true&max_age_days=${age}`)
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
       .then(data => { setJobs(data); setLoading(false) })
@@ -350,16 +436,32 @@ export default function App() {
 
   useEffect(() => { loadJobs(maxAge) }, [maxAge])
 
+  function loadLatestScan() {
+    fetch('/api/scans/latest')
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
+      .then(data => setLatestScan(data))
+      .catch(() => {})
+  }
+
+  useEffect(() => {
+    loadLatestScan()
+    const interval = setInterval(loadLatestScan, 60_000)
+    return () => clearInterval(interval)
+  }, [])
+
   async function startScan() {
     setScanning(true)
     setScanResult(null)
     try {
       const r = await fetch('/api/scan', { method: 'POST' })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
       const result = await r.json()
       setScanResult(result)
       loadJobs(maxAge)
+      loadLatestScan()
     } catch {
       setScanResult({ error: true })
+      loadLatestScan()
     } finally {
       setScanning(false)
     }
@@ -379,7 +481,7 @@ export default function App() {
   const visible   = jobs.filter(j => !j.hidden)
   const hidden    = jobs.filter(j =>  j.hidden)
   const companies = [...new Set(visible.map(j => j.company))]
-  const lastScan  = jobs.reduce((max, j) => j.last_seen > max ? j.last_seen : max, '')
+  const lastScan  = latestScan?.finished_at ?? latestScan?.started_at ?? ''
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900">
@@ -423,14 +525,18 @@ export default function App() {
             {/* Scan result flash */}
             {scanResult && !scanning && (
               <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
-                scanResult.error
+                scanResult.error || scanResult.status === 'failed'
                   ? 'bg-red-50 text-red-600'
+                  : scanResult.status === 'partial'
+                    ? 'bg-amber-50 text-amber-700'
                   : scanResult.new_jobs > 0
                     ? 'bg-emerald-50 text-emerald-700'
                     : 'bg-slate-100 text-slate-500'
               }`}>
-                {scanResult.error
+                {scanResult.error || scanResult.status === 'failed'
                   ? 'Scan failed'
+                  : scanResult.status === 'partial'
+                    ? `${scanResult.failed_companies} failed`
                   : scanResult.new_jobs > 0
                     ? `+${scanResult.new_jobs} new`
                     : 'No new jobs'}
@@ -492,6 +598,8 @@ export default function App() {
       </header>
 
       <main className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+
+        <ScanStatusPanel scan={latestScan} />
 
         {/* ── Stat cards ── */}
         {!loading && !error && (

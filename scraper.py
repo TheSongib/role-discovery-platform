@@ -11,6 +11,10 @@ LEVER_API = "https://api.lever.co/v0/postings/{company}?mode=json&limit=500"
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; JobTracker/1.0)"}
 
 
+class ScrapeError(RuntimeError):
+    """Raised when a company scan could not return a complete result set."""
+
+
 # ---------------------------------------------------------------------------
 # ATS detection
 # ---------------------------------------------------------------------------
@@ -108,7 +112,7 @@ def _parse_ts(ts) -> str | None:
 
 def scrape_greenhouse(board_id: str, company_name: str, source_url: str, us_only: bool = False) -> list[dict]:
     url = GREENHOUSE_API.format(board_id=board_id)
-    print(f"  → Greenhouse API: {url}")
+    print(f"  -> Greenhouse API: {url}")
 
     try:
         resp = requests.get(url, timeout=15, headers=HEADERS)
@@ -116,7 +120,10 @@ def scrape_greenhouse(board_id: str, company_name: str, source_url: str, us_only
         data = resp.json()
     except requests.RequestException as exc:
         print(f"  Error: {exc}")
-        return []
+        raise ScrapeError(str(exc)) from exc
+
+    if not isinstance(data, dict) or not isinstance(data.get("jobs"), list):
+        raise ScrapeError("Greenhouse returned an unexpected response shape")
 
     all_jobs = data.get("jobs", [])
     print(f"  Total listings: {len(all_jobs)}")
@@ -172,7 +179,7 @@ def scrape_greenhouse(board_id: str, company_name: str, source_url: str, us_only
 
 def scrape_lever(company_id: str, company_name: str, source_url: str) -> list[dict]:
     url = LEVER_API.format(company=company_id)
-    print(f"  → Lever API: {url}")
+    print(f"  -> Lever API: {url}")
 
     try:
         resp = requests.get(url, timeout=15, headers=HEADERS)
@@ -180,7 +187,10 @@ def scrape_lever(company_id: str, company_name: str, source_url: str) -> list[di
         data = resp.json()
     except requests.RequestException as exc:
         print(f"  Error: {exc}")
-        return []
+        raise ScrapeError(str(exc)) from exc
+
+    if not isinstance(data, list):
+        raise ScrapeError("Lever returned an unexpected response shape")
 
     print(f"  Total listings: {len(data)}")
     jobs = []
@@ -239,7 +249,7 @@ def scrape_clinchtalent(careers_url: str, company_name: str) -> list[dict]:
     base_params = urlencode(qs, doseq=True)
     base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
 
-    print(f"  → ClinchTalent (Playwright): {careers_url[:80]}...")
+    print(f"  -> ClinchTalent (Playwright): {careers_url[:80]}...")
 
     all_jobs = []
 
@@ -320,7 +330,7 @@ def scrape_eightfold(careers_url: str, company_name: str) -> list[dict]:
 
     parsed = urlparse(careers_url)
     base_url = f"{parsed.scheme}://{parsed.netloc}"
-    print(f"  → Eightfold (Playwright): {careers_url[:80]}...")
+    print(f"  -> Eightfold (Playwright): {careers_url[:80]}...")
 
     all_positions = []
 
@@ -362,11 +372,19 @@ def scrape_eightfold(careers_url: str, company_name: str) -> list[dict]:
                 pass
 
         if not search_api_base:
-            print("  Could not locate search API — page may require login.")
+            message = "Could not locate search API - page may require login."
+            print(f"  {message}")
             browser.close()
-            return []
+            raise ScrapeError(message)
+
+        if "json" not in first_page_data:
+            browser.close()
+            raise ScrapeError("Eightfold search response was not valid JSON")
 
         inner = first_page_data.get("json", {}).get("data", {})
+        if "count" not in inner or not isinstance(inner.get("positions"), list):
+            browser.close()
+            raise ScrapeError("Eightfold returned an unexpected response shape")
         total = inner.get("count", 0)
         all_positions.extend(inner.get("positions", []))
         print(f"  Total matches on server: {total}")
@@ -382,7 +400,15 @@ def scrape_eightfold(careers_url: str, company_name: str) -> list[dict]:
                 all_positions.extend(chunk)
             except Exception as exc:
                 print(f"  Pagination error at start={start}: {exc}")
-                break
+                raise ScrapeError(
+                    f"Pagination failed at start={start}: {exc}"
+                ) from exc
+
+        if len(all_positions) < total:
+            browser.close()
+            raise ScrapeError(
+                f"Eightfold returned {len(all_positions)} of {total} positions"
+            )
 
         browser.close()
 
@@ -450,7 +476,7 @@ def scrape_eightfold_v2(careers_url: str, company_name: str) -> list[dict]:
     sort_by = (params.get("sort_by") or ["new"])[0]
 
     api_base = f"{base_url}/api/apply/v2/jobs"
-    print(f"  → Eightfold v2 API: {api_base}?domain={domain}&location={location}")
+    print(f"  -> Eightfold v2 API: {api_base}?domain={domain}&location={location}")
 
     all_positions = []
     page_size = 10
@@ -462,12 +488,16 @@ def scrape_eightfold_v2(careers_url: str, company_name: str) -> list[dict]:
             "sort_by": sort_by, "num": page_size, "start": 0,
         }, headers=HEADERS, timeout=15)
         if r.status_code != 200:
-            print(f"  Error {r.status_code}: {r.text[:100]}")
-            return []
+            message = f"HTTP {r.status_code}: {r.text[:100]}"
+            print(f"  Error {message}")
+            raise ScrapeError(message)
         first = r.json()
     except requests.RequestException as exc:
         print(f"  Error: {exc}")
-        return []
+        raise ScrapeError(str(exc)) from exc
+
+    if "count" not in first or not isinstance(first.get("positions"), list):
+        raise ScrapeError("Eightfold v2 returned an unexpected response shape")
 
     total = first.get("count", 0)
     all_positions.extend(first.get("positions", []))
@@ -480,11 +510,20 @@ def scrape_eightfold_v2(careers_url: str, company_name: str) -> list[dict]:
                 "sort_by": sort_by, "num": page_size, "start": start,
             }, headers=HEADERS, timeout=15)
             if r.status_code != 200:
-                break
+                raise ScrapeError(
+                    f"Pagination failed at start={start}: HTTP {r.status_code}"
+                )
             all_positions.extend(r.json().get("positions", []))
         except requests.RequestException as exc:
             print(f"  Pagination error at start={start}: {exc}")
-            break
+            raise ScrapeError(
+                f"Pagination failed at start={start}: {exc}"
+            ) from exc
+
+    if len(all_positions) < total:
+        raise ScrapeError(
+            f"Eightfold v2 returned {len(all_positions)} of {total} positions"
+        )
 
     jobs = []
     for pos in all_positions:
@@ -515,7 +554,9 @@ def scrape_eightfold_v2(careers_url: str, company_name: str) -> list[dict]:
                 continue
         except requests.RequestException as exc:
             print(f"  Could not verify work type for {pos_id}: {exc}")
-            continue
+            raise ScrapeError(
+                f"Could not verify work type for job {pos_id}: {exc}"
+            ) from exc
 
         job_url = pos.get("canonicalPositionUrl") or ""
         if not job_url:
@@ -580,7 +621,7 @@ def scrape_workday(careers_url: str, company_name: str, us_only: bool = False) -
     tenant = parsed.hostname.split(".")[0]
 
     api_url = f"https://{parsed.hostname}/wday/cxs/{tenant}/{board}/jobs"
-    print(f"  → Workday API: {api_url}")
+    print(f"  -> Workday API: {api_url}")
 
     # Build appliedFacets from URL query params — Workday always expects arrays
     qs = parse_qs(parsed.query)
@@ -604,7 +645,10 @@ def scrape_workday(careers_url: str, company_name: str, us_only: bool = False) -
         first = r.json()
     except requests.RequestException as exc:
         print(f"  Error: {exc}")
-        return []
+        raise ScrapeError(str(exc)) from exc
+
+    if "total" not in first or not isinstance(first.get("jobPostings"), list):
+        raise ScrapeError("Workday returned an unexpected response shape")
 
     total = first.get("total", 0)
     all_postings.extend(first.get("jobPostings", []))
@@ -616,8 +660,15 @@ def scrape_workday(careers_url: str, company_name: str, us_only: bool = False) -
             r = requests.post(api_url, json=payload, headers=headers, timeout=20)
             r.raise_for_status()
             all_postings.extend(r.json().get("jobPostings", []))
-        except requests.RequestException:
-            break
+        except requests.RequestException as exc:
+            raise ScrapeError(
+                f"Pagination failed at offset={offset}: {exc}"
+            ) from exc
+
+    if len(all_postings) < total:
+        raise ScrapeError(
+            f"Workday returned {len(all_postings)} of {total} postings"
+        )
 
     base_url = f"{parsed.scheme}://{parsed.hostname}"
     jobs = []
@@ -672,7 +723,7 @@ def scrape_ashby(slug: str, company_name: str, source_url: str) -> list[dict]:
     Returns all jobs in a single response (no pagination).
     """
     api_url = f"https://api.ashbyhq.com/posting-api/job-board/{slug}"
-    print(f"  → Ashby API: {api_url}")
+    print(f"  -> Ashby API: {api_url}")
 
     try:
         r = requests.get(api_url, headers=HEADERS, timeout=15)
@@ -680,7 +731,10 @@ def scrape_ashby(slug: str, company_name: str, source_url: str) -> list[dict]:
         data = r.json()
     except requests.RequestException as exc:
         print(f"  Error: {exc}")
-        return []
+        raise ScrapeError(str(exc)) from exc
+
+    if not isinstance(data, dict) or not isinstance(data.get("jobs"), list):
+        raise ScrapeError("Ashby returned an unexpected response shape")
 
     all_postings = data.get("jobs", [])
     print(f"  Total listings: {len(all_postings)}")
@@ -752,7 +806,7 @@ def scrape_icims_phenom(careers_url: str, company_name: str) -> list[dict]:
     qs = parse_qs(parsed.query, keep_blank_values=True)
     base_params = {k: v[0] for k, v in qs.items()}
 
-    print(f"  → iCIMS/Phenom API: {api_url}")
+    print(f"  -> iCIMS/Phenom API: {api_url}")
 
     all_jobs_raw = []
     page = 1
@@ -764,7 +818,12 @@ def scrape_icims_phenom(careers_url: str, company_name: str) -> list[dict]:
             d = r.json()
         except requests.RequestException as exc:
             print(f"  Error: {exc}")
-            break
+            raise ScrapeError(f"Page {page} failed: {exc}") from exc
+
+        if "totalCount" not in d or not isinstance(d.get("jobs"), list):
+            raise ScrapeError(
+                f"iCIMS/Phenom page {page} returned an unexpected response shape"
+            )
 
         total = d.get("totalCount", 0)
         batch = d.get("jobs", [])
@@ -852,5 +911,9 @@ def scrape_company(company: dict) -> list[dict]:
     elif ats_type == "ashby":
         return scrape_ashby(company.get("board_id", name.lower()), name, url)
     else:
-        print(f"  Unsupported ATS for {name}. Set 'ats' in config (greenhouse/lever/eightfold/eightfold_v2/workday/icims_phenom/ashby).")
-        return []
+        message = (
+            f"Unsupported ATS '{ats_type}' for {name}. Set a supported 'ats' "
+            "value in config."
+        )
+        print(f"  {message}")
+        raise ScrapeError(message)
