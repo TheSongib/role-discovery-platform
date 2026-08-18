@@ -16,6 +16,7 @@ from db import (
     finish_scan_run,
     get_latest_scan,
     init_db,
+    reconcile_company_jobs,
     record_company_scan_result,
     set_hidden,
     upsert_job,
@@ -169,6 +170,12 @@ def _run_scan(trigger: str = "manual") -> dict:
                     total_new += 1
                     company_new += 1
                     new_jobs.append(job)
+            removed_jobs = reconcile_company_jobs(company["name"], jobs)
+            if removed_jobs:
+                print(
+                    f"[{company['name']}] removed {removed_jobs} job(s) "
+                    "after 3 consecutive successful misses"
+                )
             total_found += company_found
             total_seen += len(jobs)
             total_not_remote += company_not_remote

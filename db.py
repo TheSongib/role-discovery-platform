@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Iterator
 
 DB_PATH = Path(__file__).parent / "jobs.db"
+MISSED_SCAN_DELETE_THRESHOLD = 3
 
 
 def _utc_now() -> str:
@@ -37,6 +38,7 @@ def init_db():
                 date_posted TEXT,
                 date_found  TEXT NOT NULL,
                 last_seen   TEXT NOT NULL,
+                missed_scans INTEGER NOT NULL DEFAULT 0,
                 source_url  TEXT,
                 UNIQUE(title, company, url)
             )
@@ -45,12 +47,14 @@ def init_db():
         for sql in [
             "ALTER TABLE jobs ADD COLUMN last_seen TEXT",
             "ALTER TABLE jobs ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE jobs ADD COLUMN missed_scans INTEGER NOT NULL DEFAULT 0",
         ]:
             try:
                 conn.execute(sql)
             except sqlite3.OperationalError:
                 pass  # Column already exists
         conn.execute("UPDATE jobs SET last_seen = date_found WHERE last_seen IS NULL")
+        conn.execute("UPDATE jobs SET missed_scans = 0 WHERE missed_scans IS NULL")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS scan_runs (
                 id                   INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -256,7 +260,7 @@ def upsert_job(job: dict) -> bool:
 
         if existing:
             conn.execute(
-                "UPDATE jobs SET last_seen = ? WHERE id = ?",
+                "UPDATE jobs SET last_seen = ?, missed_scans = 0 WHERE id = ?",
                 (job["last_seen"], existing["id"]),
             )
             conn.commit()
@@ -275,6 +279,60 @@ def upsert_job(job: dict) -> bool:
             )
             conn.commit()
             return True
+
+
+def reconcile_company_jobs(company: str, seen_jobs: list[dict]) -> int:
+    """Advance missed-scan counts after a successful company scrape.
+
+    Jobs returned by the scrape have their counter reset. Stored jobs absent
+    from the result are deleted on their third consecutive successful miss.
+    The caller must not invoke this after a failed or incomplete scrape.
+    """
+    seen_keys = {
+        (job.get("title"), job.get("url"))
+        for job in seen_jobs
+        if job.get("company") == company
+    }
+
+    with get_conn() as conn:
+        stored_jobs = conn.execute(
+            """
+            SELECT id, title, url, missed_scans
+            FROM jobs
+            WHERE company = ?
+            """,
+            (company,),
+        ).fetchall()
+
+        seen_ids = []
+        missed_updates = []
+        delete_ids = []
+        for stored_job in stored_jobs:
+            if (stored_job["title"], stored_job["url"]) in seen_keys:
+                seen_ids.append((stored_job["id"],))
+                continue
+
+            missed_scans = stored_job["missed_scans"] + 1
+            if missed_scans >= MISSED_SCAN_DELETE_THRESHOLD:
+                delete_ids.append((stored_job["id"],))
+            else:
+                missed_updates.append((missed_scans, stored_job["id"]))
+
+        if seen_ids:
+            conn.executemany(
+                "UPDATE jobs SET missed_scans = 0 WHERE id = ?",
+                seen_ids,
+            )
+        if missed_updates:
+            conn.executemany(
+                "UPDATE jobs SET missed_scans = ? WHERE id = ?",
+                missed_updates,
+            )
+        if delete_ids:
+            conn.executemany("DELETE FROM jobs WHERE id = ?", delete_ids)
+
+        conn.commit()
+        return len(delete_ids)
 
 
 def get_all_jobs(remote_only: bool = False, max_age_days: int = None) -> list[sqlite3.Row]:
