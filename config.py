@@ -287,6 +287,60 @@ COMPANIES = [
         "ats": "greenhouse",
         "board_id": "mercury",
     },
+    {
+        "name": "Vercel",
+        "careers_url": "https://job-boards.greenhouse.io/vercel",
+        "ats": "greenhouse",
+        "board_id": "vercel",
+    },
+    {
+        "name": "ClickHouse",
+        "careers_url": "https://job-boards.greenhouse.io/clickhouse",
+        "ats": "greenhouse",
+        "board_id": "clickhouse",
+    },
+    {
+        "name": "LaunchDarkly",
+        "careers_url": "https://job-boards.greenhouse.io/launchdarkly",
+        "ats": "greenhouse",
+        "board_id": "launchdarkly",
+    },
+    {
+        "name": "OpenRouter",
+        "careers_url": "https://jobs.ashbyhq.com/openrouter",
+        "ats": "ashby",
+        "board_id": "openrouter",
+    },
+    {
+        "name": "Render",
+        "careers_url": "https://jobs.ashbyhq.com/render",
+        "ats": "ashby",
+        "board_id": "render",
+    },
+    {
+        "name": "WorkOS",
+        "careers_url": "https://jobs.ashbyhq.com/workos",
+        "ats": "ashby",
+        "board_id": "workos",
+    },
+    {
+        "name": "Modern Treasury",
+        "careers_url": "https://jobs.ashbyhq.com/moderntreasury",
+        "ats": "ashby",
+        "board_id": "moderntreasury",
+    },
+    {
+        "name": "Omni",
+        "careers_url": "https://jobs.ashbyhq.com/omni",
+        "ats": "ashby",
+        "board_id": "omni",
+    },
+    {
+        "name": "Centralize",
+        "careers_url": "https://jobs.ashbyhq.com/centralize",
+        "ats": "ashby",
+        "board_id": "centralize",
+    },
 ]
 
 # Job titles containing any of these are excluded (case-insensitive)
