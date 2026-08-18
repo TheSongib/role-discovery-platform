@@ -43,10 +43,10 @@ class GreenhouseRemoteFilteringTests(unittest.TestCase):
         return response
 
     @staticmethod
-    def _job(job_id, location):
+    def _job(job_id, location, title="Security Engineer"):
         return {
             "id": job_id,
-            "title": "Security Engineer",
+            "title": title,
             "location": {"name": location},
             "absolute_url": f"https://example.com/jobs/{job_id}",
             "departments": [],
@@ -74,6 +74,9 @@ class GreenhouseRemoteFilteringTests(unittest.TestCase):
         jobs = scrape_greenhouse("tenableinc", "Tenable", "https://tenable.com/careers")
 
         self.assertEqual(jobs, [])
+        self.assertEqual(jobs.total_found, 1)
+        self.assertEqual(jobs.not_remote, 1)
+        self.assertEqual(jobs.keyword_filtered, 0)
 
     @patch("scraper.requests.get")
     def test_rejects_remote_listing_outside_us(self, mock_get):
@@ -84,6 +87,9 @@ class GreenhouseRemoteFilteringTests(unittest.TestCase):
         jobs = scrape_greenhouse("tenableinc", "Tenable", "https://tenable.com/careers")
 
         self.assertEqual(jobs, [])
+        self.assertEqual(jobs.total_found, 1)
+        self.assertEqual(jobs.not_remote, 1)
+        self.assertEqual(jobs.keyword_filtered, 0)
 
     @patch("scraper.requests.get")
     def test_keeps_listing_with_us_remote_option(self, mock_get):
@@ -97,6 +103,29 @@ class GreenhouseRemoteFilteringTests(unittest.TestCase):
         jobs = scrape_greenhouse("oura", "Oura", "https://ouraring.com/careers")
 
         self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs.total_found, 1)
+        self.assertEqual(jobs.not_remote, 0)
+        self.assertEqual(jobs.keyword_filtered, 0)
+
+    @patch("scraper.requests.get")
+    def test_reports_mutually_exclusive_filter_counts(self, mock_get):
+        mock_get.return_value = self._response([
+            self._job(1, "Remote - United States"),
+            self._job(2, "Austin, Texas, United States"),
+            self._job(3, "Remote - United States", title="Product Manager"),
+            self._job(4, "Remote - United States", title="Senior Security Engineer"),
+        ])
+
+        jobs = scrape_greenhouse("example", "Example", "https://example.com/careers")
+
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs.total_found, 4)
+        self.assertEqual(jobs.not_remote, 1)
+        self.assertEqual(jobs.keyword_filtered, 2)
+        self.assertEqual(
+            jobs.total_found,
+            len(jobs) + jobs.not_remote + jobs.keyword_filtered,
+        )
 
 
 class EightfoldNavigationTests(unittest.TestCase):

@@ -15,6 +15,26 @@ class ScrapeError(RuntimeError):
     """Raised when a company scan could not return a complete result set."""
 
 
+class ScrapeResult(list):
+    """Filtered jobs plus mutually exclusive counts from the raw ATS result."""
+
+    def __init__(
+        self,
+        jobs: list[dict],
+        *,
+        total_found: int,
+        not_remote: int,
+        keyword_filtered: int,
+    ):
+        super().__init__(jobs)
+        self.total_found = total_found
+        self.not_remote = not_remote
+        self.keyword_filtered = keyword_filtered
+
+        if total_found != len(jobs) + not_remote + keyword_filtered:
+            raise ValueError("Scrape filter counts do not add up to total_found")
+
+
 # ---------------------------------------------------------------------------
 # ATS detection
 # ---------------------------------------------------------------------------
@@ -128,6 +148,8 @@ def scrape_greenhouse(board_id: str, company_name: str, source_url: str, us_only
     all_jobs = data.get("jobs", [])
     print(f"  Total listings: {len(all_jobs)}")
     jobs = []
+    not_remote = 0
+    keyword_filtered = 0
     for job in all_jobs:
         title = job.get("title", "")
         location = job.get("location", {}).get("name", "")
@@ -145,12 +167,15 @@ def scrape_greenhouse(board_id: str, company_name: str, source_url: str, us_only
         meta_is_remote = isinstance(meta_workplace, str) and "remote" in meta_workplace.lower()
 
         if not _matches_role(title):
+            keyword_filtered += 1
             continue
         # A country-only US location (e.g. "United States", no city) implies remote-eligible
         is_country_only_us = "," not in location and (_is_us_workable(location) or us_only)
         if not meta_is_remote and not _is_remote(title, location) and not is_country_only_us:
+            not_remote += 1
             continue
         if not us_only and not _is_us_workable(location):
+            not_remote += 1
             continue
 
         # Keep full ISO datetime from Greenhouse — has genuine hour/minute precision
@@ -170,7 +195,12 @@ def scrape_greenhouse(board_id: str, company_name: str, source_url: str, us_only
             "source_url": source_url,
         })
 
-    return jobs
+    return ScrapeResult(
+        jobs,
+        total_found=len(all_jobs),
+        not_remote=not_remote,
+        keyword_filtered=keyword_filtered,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +224,8 @@ def scrape_lever(company_id: str, company_name: str, source_url: str) -> list[di
 
     print(f"  Total listings: {len(data)}")
     jobs = []
+    not_remote = 0
+    keyword_filtered = 0
     for job in data:
         title = job.get("text", "")
         categories = job.get("categories", {})
@@ -203,11 +235,14 @@ def scrape_lever(company_id: str, company_name: str, source_url: str) -> list[di
         job_url = job.get("hostedUrl", "")
 
         if not _matches_role(title):
+            keyword_filtered += 1
             continue
         is_country_only_us = "," not in location and _is_us_workable(location)
         if not _is_remote(title, location, commitment) and not is_country_only_us:
+            not_remote += 1
             continue
         if not _is_us_workable(location):
+            not_remote += 1
             continue
 
         jobs.append({
@@ -224,7 +259,12 @@ def scrape_lever(company_id: str, company_name: str, source_url: str) -> list[di
             "source_url": source_url,
         })
 
-    return jobs
+    return ScrapeResult(
+        jobs,
+        total_found=len(data),
+        not_remote=not_remote,
+        keyword_filtered=keyword_filtered,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -287,12 +327,16 @@ def scrape_clinchtalent(careers_url: str, company_name: str) -> list[dict]:
     print(f"  Total listings fetched: {len(all_jobs)}")
 
     jobs = []
+    not_remote = 0
+    keyword_filtered = 0
     for entry in all_jobs:
         title = entry["title"]
         if not _matches_role(title):
+            keyword_filtered += 1
             continue
         location = entry["location"]
         if not _is_remote(title, location) and "remote" not in careers_url.lower():
+            not_remote += 1
             continue
 
         jobs.append({
@@ -309,7 +353,12 @@ def scrape_clinchtalent(careers_url: str, company_name: str) -> list[dict]:
             "source_url": careers_url,
         })
 
-    return jobs
+    return ScrapeResult(
+        jobs,
+        total_found=len(all_jobs),
+        not_remote=not_remote,
+        keyword_filtered=keyword_filtered,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -414,9 +463,11 @@ def scrape_eightfold(careers_url: str, company_name: str) -> list[dict]:
 
     # Apply title filters (URL already handles remote + location + seniority)
     jobs = []
+    keyword_filtered = 0
     for pos in all_positions:
         title = pos.get("name", "")
         if not _matches_role(title):
+            keyword_filtered += 1
             continue
 
         locations = pos.get("locations", [])
@@ -439,7 +490,12 @@ def scrape_eightfold(careers_url: str, company_name: str) -> list[dict]:
             "source_url": careers_url,
         })
 
-    return jobs
+    return ScrapeResult(
+        jobs,
+        total_found=len(all_positions),
+        not_remote=0,
+        keyword_filtered=keyword_filtered,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -526,14 +582,18 @@ def scrape_eightfold_v2(careers_url: str, company_name: str) -> list[dict]:
         )
 
     jobs = []
+    not_remote = 0
+    keyword_filtered = 0
     for pos in all_positions:
         title = pos.get("name", "")
         if not _matches_role(title):
+            keyword_filtered += 1
             continue
 
         raw_locs = pos.get("locations", [])
         location_str = raw_locs[0] if raw_locs else ""
         if not _is_us_workable(location_str):
+            not_remote += 1
             continue
 
         # Netflix's remote search can return onsite jobs with a misleading
@@ -541,6 +601,7 @@ def scrape_eightfold_v2(careers_url: str, company_name: str) -> list[dict]:
         # text. Verify the authoritative Work Type from every matching detail.
         pos_id = pos.get("id", "")
         if not pos_id:
+            not_remote += 1
             continue
         try:
             detail_response = requests.get(
@@ -551,6 +612,7 @@ def scrape_eightfold_v2(careers_url: str, company_name: str) -> list[dict]:
             )
             detail_response.raise_for_status()
             if not _is_eightfold_v2_remote(detail_response.json()):
+                not_remote += 1
                 continue
         except requests.RequestException as exc:
             print(f"  Could not verify work type for {pos_id}: {exc}")
@@ -577,7 +639,12 @@ def scrape_eightfold_v2(careers_url: str, company_name: str) -> list[dict]:
             "source_url": careers_url,
         })
 
-    return jobs
+    return ScrapeResult(
+        jobs,
+        total_found=len(all_positions),
+        not_remote=not_remote,
+        keyword_filtered=keyword_filtered,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -672,9 +739,12 @@ def scrape_workday(careers_url: str, company_name: str, us_only: bool = False) -
 
     base_url = f"{parsed.scheme}://{parsed.hostname}"
     jobs = []
+    not_remote = 0
+    keyword_filtered = 0
     for posting in all_postings:
         title = posting.get("title", "")
         if not _matches_role(title):
+            keyword_filtered += 1
             continue
 
         location = posting.get("locationsText", "")
@@ -684,11 +754,14 @@ def scrape_workday(careers_url: str, company_name: str, us_only: bool = False) -
             if "locationCountry" in applied_facets or us_only:
                 location = "United States (Remote)"
             else:
+                not_remote += 1
                 continue  # can't determine location without country facet
 
         if not _is_us_workable(location):
+            not_remote += 1
             continue
         if not _is_remote(title, location) and "remote" not in careers_url.lower():
+            not_remote += 1
             continue
 
         ext_path = posting.get("externalPath", "")
@@ -709,7 +782,12 @@ def scrape_workday(careers_url: str, company_name: str, us_only: bool = False) -
             "source_url": careers_url,
         })
 
-    return jobs
+    return ScrapeResult(
+        jobs,
+        total_found=len(all_postings),
+        not_remote=not_remote,
+        keyword_filtered=keyword_filtered,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -740,9 +818,12 @@ def scrape_ashby(slug: str, company_name: str, source_url: str) -> list[dict]:
     print(f"  Total listings: {len(all_postings)}")
 
     jobs = []
+    not_remote = 0
+    keyword_filtered = 0
     for posting in all_postings:
         title = posting.get("title", "")
         if not _matches_role(title):
+            keyword_filtered += 1
             continue
 
         # US check via structured address field (most reliable)
@@ -752,19 +833,23 @@ def scrape_ashby(slug: str, company_name: str, source_url: str) -> list[dict]:
         ).get("addressCountry", "")
         location = posting.get("location", "")
         if addr_country and addr_country != "United States":
+            not_remote += 1
             continue
         if not addr_country and not _is_us_workable(location):
+            not_remote += 1
             continue
 
         # Remote check — Ashby provides workplaceType and isRemote
         workplace = (posting.get("workplaceType") or "").lower().strip()
         is_remote_flag = posting.get("isRemote", False)
         if workplace in ("hybrid", "onsite", "on-site"):
+            not_remote += 1
             continue
         if not is_remote_flag and workplace != "remote":
             # Fall back to location text only. A title such as "Distributed
             # Data Systems" describes the technology, not a remote workplace.
             if not _is_remote("", location):
+                not_remote += 1
                 continue
 
         job_url = posting.get("jobUrl") or posting.get("applyUrl") or ""
@@ -783,7 +868,12 @@ def scrape_ashby(slug: str, company_name: str, source_url: str) -> list[dict]:
             "source_url": source_url,
         })
 
-    return jobs
+    return ScrapeResult(
+        jobs,
+        total_found=len(all_postings),
+        not_remote=not_remote,
+        keyword_filtered=keyword_filtered,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -837,10 +927,13 @@ def scrape_icims_phenom(careers_url: str, company_name: str) -> list[dict]:
         page += 1
 
     jobs = []
+    not_remote = 0
+    keyword_filtered = 0
     for entry in all_jobs_raw:
         data = entry.get("data", {})
         title = data.get("title", "")
         if not _matches_role(title):
+            keyword_filtered += 1
             continue
 
         location = data.get("location_name", "") or data.get("full_location", "")
@@ -848,8 +941,10 @@ def scrape_icims_phenom(careers_url: str, company_name: str) -> list[dict]:
 
         # US filter — trust country_code field if available, else fall back to text
         if country_code and country_code != "US":
+            not_remote += 1
             continue
         if not country_code and not _is_us_workable(location):
+            not_remote += 1
             continue
 
         req_id = data.get("req_id") or data.get("slug", "")
@@ -872,7 +967,12 @@ def scrape_icims_phenom(careers_url: str, company_name: str) -> list[dict]:
             "source_url": careers_url,
         })
 
-    return jobs
+    return ScrapeResult(
+        jobs,
+        total_found=len(all_jobs_raw),
+        not_remote=not_remote,
+        keyword_filtered=keyword_filtered,
+    )
 
 
 # ---------------------------------------------------------------------------

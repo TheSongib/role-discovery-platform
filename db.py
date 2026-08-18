@@ -61,7 +61,10 @@ def init_db():
                 total_companies      INTEGER NOT NULL DEFAULT 0,
                 successful_companies INTEGER NOT NULL DEFAULT 0,
                 failed_companies     INTEGER NOT NULL DEFAULT 0,
+                total_found          INTEGER NOT NULL DEFAULT 0,
                 total_seen           INTEGER NOT NULL DEFAULT 0,
+                not_remote           INTEGER NOT NULL DEFAULT 0,
+                keyword_filtered     INTEGER NOT NULL DEFAULT 0,
                 new_jobs             INTEGER NOT NULL DEFAULT 0
             )
         """)
@@ -72,7 +75,10 @@ def init_db():
                 company     TEXT NOT NULL,
                 ats         TEXT,
                 status      TEXT NOT NULL,
+                jobs_found  INTEGER NOT NULL DEFAULT 0,
                 jobs_seen   INTEGER NOT NULL DEFAULT 0,
+                not_remote  INTEGER NOT NULL DEFAULT 0,
+                keyword_filtered INTEGER NOT NULL DEFAULT 0,
                 new_jobs    INTEGER NOT NULL DEFAULT 0,
                 error       TEXT,
                 started_at  TEXT NOT NULL,
@@ -81,6 +87,18 @@ def init_db():
                 UNIQUE(scan_id, company)
             )
         """)
+        for sql in [
+            "ALTER TABLE scan_runs ADD COLUMN total_found INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE scan_runs ADD COLUMN not_remote INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE scan_runs ADD COLUMN keyword_filtered INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE company_scan_results ADD COLUMN jobs_found INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE company_scan_results ADD COLUMN not_remote INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE company_scan_results ADD COLUMN keyword_filtered INTEGER NOT NULL DEFAULT 0",
+        ]:
+            try:
+                conn.execute(sql)
+            except sqlite3.OperationalError:
+                pass  # Column already exists
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_company_scan_results_scan_id "
             "ON company_scan_results(scan_id)"
@@ -106,7 +124,10 @@ def record_company_scan_result(
     company: str,
     ats: str,
     status: str,
+    jobs_found: int,
     jobs_seen: int,
+    not_remote: int,
+    keyword_filtered: int,
     new_jobs: int,
     error: str | None,
     started_at: str,
@@ -115,16 +136,20 @@ def record_company_scan_result(
         conn.execute(
             """
             INSERT INTO company_scan_results
-                (scan_id, company, ats, status, jobs_seen, new_jobs, error,
-                 started_at, finished_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (scan_id, company, ats, status, jobs_found, jobs_seen,
+                 not_remote, keyword_filtered, new_jobs, error, started_at,
+                 finished_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 scan_id,
                 company,
                 ats,
                 status,
+                jobs_found,
                 jobs_seen,
+                not_remote,
+                keyword_filtered,
                 new_jobs,
                 error,
                 started_at,
@@ -139,7 +164,10 @@ def finish_scan_run(
     status: str,
     successful_companies: int,
     failed_companies: int,
+    total_found: int,
     total_seen: int,
+    not_remote: int,
+    keyword_filtered: int,
     new_jobs: int,
 ):
     with get_conn() as conn:
@@ -147,7 +175,8 @@ def finish_scan_run(
             """
             UPDATE scan_runs
             SET status = ?, finished_at = ?, successful_companies = ?,
-                failed_companies = ?, total_seen = ?, new_jobs = ?
+                failed_companies = ?, total_found = ?, total_seen = ?,
+                not_remote = ?, keyword_filtered = ?, new_jobs = ?
             WHERE id = ?
             """,
             (
@@ -155,7 +184,10 @@ def finish_scan_run(
                 _utc_now(),
                 successful_companies,
                 failed_companies,
+                total_found,
                 total_seen,
+                not_remote,
+                keyword_filtered,
                 new_jobs,
                 scan_id,
             ),
@@ -173,8 +205,8 @@ def get_latest_scan() -> dict | None:
 
         companies = conn.execute(
             """
-            SELECT company, ats, status, jobs_seen, new_jobs, error,
-                   started_at, finished_at
+            SELECT company, ats, status, jobs_found, jobs_seen, not_remote,
+                   keyword_filtered, new_jobs, error, started_at, finished_at
             FROM company_scan_results
             WHERE scan_id = ?
             ORDER BY CASE WHEN status = 'failed' THEN 0 ELSE 1 END,
@@ -194,6 +226,15 @@ def get_latest_scan() -> dict | None:
             )
             result["total_seen"] = sum(
                 company["jobs_seen"] for company in companies
+            )
+            result["total_found"] = sum(
+                company["jobs_found"] for company in companies
+            )
+            result["not_remote"] = sum(
+                company["not_remote"] for company in companies
+            )
+            result["keyword_filtered"] = sum(
+                company["keyword_filtered"] for company in companies
             )
             result["new_jobs"] = sum(
                 company["new_jobs"] for company in companies

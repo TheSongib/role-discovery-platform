@@ -359,7 +359,10 @@ function ScanStatusPanel({ scan }) {
           <div className="min-w-0">
             <p className="text-sm font-semibold text-slate-800">{summary}</p>
             <p className="mt-0.5 text-xs text-slate-400">
-              {scan.trigger} scan · {relativeDate(scan.finished_at ?? scan.started_at)} · {scan.total_seen} matching jobs
+              {scan.trigger} scan · {relativeDate(scan.finished_at ?? scan.started_at)}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              {scan.total_found} jobs found · {scan.keyword_filtered} removed by keywords · {scan.not_remote} not remote · {scan.total_seen} matching
             </p>
           </div>
         </div>
@@ -392,7 +395,9 @@ function ScanStatusPanel({ scan }) {
               </div>
               <div className="flex shrink-0 items-center gap-3 text-xs">
                 {company.status === 'success' && (
-                  <span className="text-slate-400">{company.jobs_seen} matching</span>
+                  <span className="text-slate-400">
+                    {company.jobs_found} found · {company.keyword_filtered} removed by keywords · {company.not_remote} not remote · {company.jobs_seen} matching
+                  </span>
                 )}
                 <span className={company.status === 'success' ? 'font-medium text-emerald-600' : 'font-medium text-red-600'}>
                   {company.status}
@@ -437,7 +442,7 @@ export default function App() {
   useEffect(() => { loadJobs(maxAge) }, [maxAge])
 
   function loadLatestScan() {
-    fetch('/api/scans/latest')
+    return fetch('/api/scans/latest', { cache: 'no-store' })
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
       .then(data => setLatestScan(data))
       .catch(() => {})
@@ -445,9 +450,10 @@ export default function App() {
 
   useEffect(() => {
     loadLatestScan()
-    const interval = setInterval(loadLatestScan, 60_000)
+    const scanIsActive = scanning || latestScan?.status === 'running'
+    const interval = setInterval(loadLatestScan, scanIsActive ? 1_000 : 60_000)
     return () => clearInterval(interval)
-  }, [])
+  }, [scanning, latestScan?.status])
 
   async function startScan() {
     setScanning(true)

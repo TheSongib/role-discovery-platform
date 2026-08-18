@@ -149,7 +149,10 @@ def _run_scan(trigger: str = "manual") -> dict:
     init_db()
     scan_id = create_scan_run(trigger, len(COMPANIES))
     total_new = 0
+    total_found = 0
     total_seen = 0
+    total_not_remote = 0
+    total_keyword_filtered = 0
     successful_companies = 0
     failed_companies = 0
     new_jobs = []
@@ -158,12 +161,18 @@ def _run_scan(trigger: str = "manual") -> dict:
         company_new = 0
         try:
             jobs = scrape_company(company)
+            company_found = getattr(jobs, "total_found", len(jobs))
+            company_not_remote = getattr(jobs, "not_remote", 0)
+            company_keyword_filtered = getattr(jobs, "keyword_filtered", 0)
             for job in jobs:
-                total_seen += 1
                 if upsert_job(job):
                     total_new += 1
                     company_new += 1
                     new_jobs.append(job)
+            total_found += company_found
+            total_seen += len(jobs)
+            total_not_remote += company_not_remote
+            total_keyword_filtered += company_keyword_filtered
         except Exception as exc:
             failed_companies += 1
             error = f"{type(exc).__name__}: {exc}"
@@ -173,7 +182,10 @@ def _run_scan(trigger: str = "manual") -> dict:
                 company=company["name"],
                 ats=company.get("ats", "unknown"),
                 status="failed",
+                jobs_found=0,
                 jobs_seen=0,
+                not_remote=0,
+                keyword_filtered=0,
                 new_jobs=0,
                 error=error[:2000],
                 started_at=company_started_at,
@@ -186,7 +198,10 @@ def _run_scan(trigger: str = "manual") -> dict:
             company=company["name"],
             ats=company.get("ats", "unknown"),
             status="success",
+            jobs_found=company_found,
             jobs_seen=len(jobs),
+            not_remote=company_not_remote,
+            keyword_filtered=company_keyword_filtered,
             new_jobs=company_new,
             error=None,
             started_at=company_started_at,
@@ -204,7 +219,10 @@ def _run_scan(trigger: str = "manual") -> dict:
         status=status,
         successful_companies=successful_companies,
         failed_companies=failed_companies,
+        total_found=total_found,
         total_seen=total_seen,
+        not_remote=total_not_remote,
+        keyword_filtered=total_keyword_filtered,
         new_jobs=total_new,
     )
     if new_jobs:
@@ -213,7 +231,10 @@ def _run_scan(trigger: str = "manual") -> dict:
         "scan_id": scan_id,
         "status": status,
         "new_jobs": total_new,
+        "total_found": total_found,
         "total_seen": total_seen,
+        "not_remote": total_not_remote,
+        "keyword_filtered": total_keyword_filtered,
         "successful_companies": successful_companies,
         "failed_companies": failed_companies,
     }
