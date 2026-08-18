@@ -1,5 +1,5 @@
 [Unit]
-Description=JobTracker API
+Description=JobTracker Frontend
 Wants=network-online.target
 After=network-online.target
 
@@ -7,9 +7,8 @@ After=network-online.target
 Type=simple
 User=__JOBTRACKER_USER__
 WorkingDirectory=__JOBTRACKER_DIR__
-Environment=PYTHONUNBUFFERED=1
-ExecStart=/usr/bin/env python3 -m uvicorn api:app --host 0.0.0.0 --port 8000
-Restart=always
+ExecStart=/usr/bin/env npx serve -s frontend/dist -l 5173
+Restart=on-failure
 RestartSec=5
 
 [Install]
