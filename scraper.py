@@ -745,15 +745,33 @@ def scrape_ashby(slug: str, company_name: str, source_url: str) -> list[dict]:
         if not _matches_role(title):
             continue
 
-        # US check via structured address field (most reliable)
-        addr_country = (
-            (posting.get("address") or {})
-            .get("postalAddress") or {}
-        ).get("addressCountry", "")
-        location = posting.get("location", "")
-        if addr_country and addr_country != "United States":
-            continue
-        if not addr_country and not _is_us_workable(location):
+        # A posting may list an office as its primary location and a US-remote
+        # option in secondaryLocations. Keep each label paired with its
+        # structured country so locations from different countries cannot be
+        # combined into a false remote-US match.
+        location_options = [
+            (posting.get("location", ""), posting.get("address") or {}),
+        ]
+        for secondary in posting.get("secondaryLocations") or []:
+            location_options.append((
+                secondary.get("location", ""),
+                secondary.get("address") or {},
+            ))
+
+        def is_us_option(option: tuple[str, dict]) -> bool:
+            label, address = option
+            country = (
+                (address.get("postalAddress") or {})
+                .get("addressCountry", "")
+            )
+            if country:
+                return _is_us_workable(country)
+            return _is_us_workable(label)
+
+        us_location_options = [
+            option for option in location_options if is_us_option(option)
+        ]
+        if not us_location_options:
             continue
 
         # Remote check — Ashby provides workplaceType and isRemote
@@ -762,11 +780,18 @@ def scrape_ashby(slug: str, company_name: str, source_url: str) -> list[dict]:
         if workplace in ("hybrid", "onsite", "on-site"):
             continue
         if not is_remote_flag and workplace != "remote":
-            # Fall back to location text only. A title such as "Distributed
-            # Data Systems" describes the technology, not a remote workplace.
-            if not _is_remote("", location):
+            # Fall back to US location labels only. A title such as
+            # "Distributed Data Systems" describes the technology, not a
+            # remote workplace.
+            if not any(
+                _is_remote("", label)
+                for label, _address in us_location_options
+            ):
                 continue
 
+        location = "; ".join(dict.fromkeys(
+            label for label, _address in location_options if label
+        ))
         job_url = posting.get("jobUrl") or posting.get("applyUrl") or ""
 
         jobs.append({
