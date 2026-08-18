@@ -71,12 +71,14 @@ class RunScanTests(unittest.TestCase):
     @patch("api.record_company_scan_result")
     @patch("api.create_scan_run", return_value=42)
     @patch("api.upsert_job", return_value=True)
+    @patch("api.reconcile_company_jobs", return_value=0)
     @patch("api.init_db")
     @patch("api.scrape_company")
     def test_company_failure_does_not_abort_remaining_scans(
         self,
         mock_scrape_company,
         _mock_init_db,
+        mock_reconcile_company_jobs,
         mock_upsert_job,
         mock_create_scan_run,
         mock_record_company_result,
@@ -106,6 +108,7 @@ class RunScanTests(unittest.TestCase):
             [call(failed_company), call(healthy_company)],
         )
         mock_upsert_job.assert_called_once_with(airbnb_job)
+        mock_reconcile_company_jobs.assert_called_once_with("Airbnb", airbnb_jobs)
         mock_notify.assert_called_once_with([airbnb_job])
         mock_create_scan_run.assert_called_once_with("manual", 2)
         self.assertEqual(mock_record_company_result.call_count, 2)

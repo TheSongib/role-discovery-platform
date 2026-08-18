@@ -18,6 +18,7 @@ from db import (
     finish_scan_run,
     get_all_jobs,
     init_db,
+    reconcile_company_jobs,
     record_company_scan_result,
     upsert_job,
 )
@@ -48,6 +49,7 @@ def cmd_scrape(export_fmt: str | None):
                 if upsert_job(job):
                     new_count += 1
                     print(f"    + {job['title']}  |  {job['location']}")
+            removed_count = reconcile_company_jobs(company["name"], jobs)
         except Exception as exc:
             failed_companies += 1
             error = f"{type(exc).__name__}: {exc}"
@@ -72,7 +74,8 @@ def cmd_scrape(export_fmt: str | None):
             f"  {company_found} found, "
             f"{company_keyword_filtered} removed by keywords, "
             f"{company_not_remote} not remote, "
-            f"{len(jobs)} matching, {new_count} new, {skipped} already stored."
+            f"{len(jobs)} matching, {new_count} new, {skipped} already stored, "
+            f"{removed_count} closed."
         )
         total_new += new_count
         total_found += company_found

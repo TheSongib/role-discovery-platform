@@ -8,7 +8,7 @@ A personal job board scraper that monitors company career pages for remote US en
 - Filters for **remote US** roles in **software engineering, security engineering, SRE, DevOps, and IAM**
 - Excludes senior/leadership titles (staff, principal, director, architect, manager)
 - Stores results in a local SQLite database with deduplication — `date_found` is never overwritten on re-runs
-- Tracks `last_seen` so you know if a job is still active
+- Removes jobs after three consecutive successful company scans no longer find them
 - Records every scan and each company's success or failure so broken sources are visible
 - Scans every 15 minutes on weekdays from 7 AM to 8 PM Eastern and hourly at all other times
 - Serves a React frontend with live data, a one-click scan button, and the ability to hide jobs you've already applied to or aren't interested in
@@ -188,10 +188,17 @@ Jobs are stored in `jobs.db` (SQLite). Key fields:
 |---|---|
 | `date_found` | First time this job was scraped — never updated |
 | `last_seen` | Last scrape run that found this job |
+| `missed_scans` | Consecutive successful company scans that did not find this job |
 | `date_posted` | When the company posted the job (if available) |
 | `hidden` | Set to 1 when hidden from the UI |
 
 `jobs.db` is local only — do not commit it to git.
+
+After each successful company scan, matching stored jobs that were not returned
+have `missed_scans` incremented. Seeing a job again resets the counter to zero.
+The row is deleted on the third consecutive miss. Failed company scans do not
+advance the counter. If a deleted posting later returns, it is inserted as a new
+row with a new ID and `date_found` value.
 
 ## Scan status
 
