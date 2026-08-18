@@ -1,7 +1,67 @@
 import unittest
+from datetime import datetime
 from unittest.mock import call, patch
 
 import api
+
+
+class SchedulerTests(unittest.TestCase):
+    @staticmethod
+    def eastern(year, month, day, hour, minute=0, second=0, fold=0):
+        return datetime(
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+            tzinfo=api.EASTERN_TIME,
+            fold=fold,
+        )
+
+    def assert_next_scan(self, current, expected):
+        actual = api._next_scheduled_scan(current).astimezone(api.EASTERN_TIME)
+        self.assertEqual(actual, expected)
+
+    def test_weekday_daytime_scans_on_quarter_hours(self):
+        self.assert_next_scan(
+            self.eastern(2026, 8, 17, 7, 1),
+            self.eastern(2026, 8, 17, 7, 15),
+        )
+        self.assert_next_scan(
+            self.eastern(2026, 8, 17, 12, 15),
+            self.eastern(2026, 8, 17, 12, 30),
+        )
+
+    def test_weekday_schedule_transitions_at_7_am_and_8_pm(self):
+        self.assert_next_scan(
+            self.eastern(2026, 8, 17, 6, 30),
+            self.eastern(2026, 8, 17, 7, 0),
+        )
+        self.assert_next_scan(
+            self.eastern(2026, 8, 17, 19, 50),
+            self.eastern(2026, 8, 17, 20, 0),
+        )
+        self.assert_next_scan(
+            self.eastern(2026, 8, 17, 20, 0),
+            self.eastern(2026, 8, 17, 21, 0),
+        )
+
+    def test_weekends_scan_hourly(self):
+        self.assert_next_scan(
+            self.eastern(2026, 8, 22, 10, 5),
+            self.eastern(2026, 8, 22, 11, 0),
+        )
+
+    def test_hourly_schedule_handles_repeated_dst_hour(self):
+        self.assert_next_scan(
+            self.eastern(2026, 11, 1, 1, 30, fold=0),
+            self.eastern(2026, 11, 1, 1, 0, fold=1),
+        )
+
+    def test_rejects_naive_timestamps(self):
+        with self.assertRaisesRegex(ValueError, "timezone-aware"):
+            api._next_scheduled_scan(datetime(2026, 8, 17, 12, 0))
 
 
 class RunScanTests(unittest.TestCase):

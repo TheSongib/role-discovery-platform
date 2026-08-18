@@ -3,6 +3,7 @@ import os
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import requests
 from fastapi import FastAPI
@@ -30,14 +31,50 @@ FRONTEND_DIST = Path(__file__).parent / "frontend" / "dist"
 
 app = FastAPI(title="JobTracker API")
 
-SCAN_INTERVAL_SECONDS = 15 * 60  # 15 minutes
+EASTERN_TIME = ZoneInfo("America/New_York")
+WEEKDAY_SCAN_START_HOUR = 7
+WEEKDAY_SCAN_END_HOUR = 20
+
+
+def _is_frequent_scan_window(when: datetime) -> bool:
+    """Return whether ``when`` falls in the weekday 7 AM-8 PM ET window."""
+    eastern = when.astimezone(EASTERN_TIME)
+    return (
+        eastern.weekday() < 5
+        and WEEKDAY_SCAN_START_HOUR <= eastern.hour < WEEKDAY_SCAN_END_HOUR
+    )
+
+
+def _next_scheduled_scan(when: datetime | None = None) -> datetime:
+    """Return the next quarter-hour or hourly scan boundary in UTC."""
+    if when is None:
+        when = datetime.now(timezone.utc)
+    if when.tzinfo is None:
+        raise ValueError("Scheduler timestamps must be timezone-aware")
+
+    # Search in UTC so daylight-saving transitions (including the repeated
+    # fall-back hour) still produce one scan at every applicable ET boundary.
+    candidate = when.astimezone(timezone.utc).replace(second=0, microsecond=0)
+    candidate += timedelta(minutes=1)
+    for _ in range(60):
+        eastern = candidate.astimezone(EASTERN_TIME)
+        if _is_frequent_scan_window(candidate):
+            if eastern.minute % 15 == 0:
+                return candidate
+        elif eastern.minute == 0:
+            return candidate
+        candidate += timedelta(minutes=1)
+
+    raise RuntimeError("Could not calculate the next scheduled scan")
 
 
 @app.on_event("startup")
 async def start_scheduler():
     async def scheduler():
         while True:
-            await asyncio.sleep(SCAN_INTERVAL_SECONDS)
+            now = datetime.now(timezone.utc)
+            next_scan = _next_scheduled_scan(now)
+            await asyncio.sleep((next_scan - now).total_seconds())
             try:
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, _run_scan, "scheduled")

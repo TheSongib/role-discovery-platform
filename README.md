@@ -10,6 +10,7 @@ A personal job board scraper that monitors company career pages for remote US en
 - Stores results in a local SQLite database with deduplication — `date_found` is never overwritten on re-runs
 - Tracks `last_seen` so you know if a job is still active
 - Records every scan and each company's success or failure so broken sources are visible
+- Scans every 15 minutes on weekdays from 7 AM to 8 PM Eastern and hourly at all other times
 - Serves a React frontend with live data, a one-click scan button, and the ability to hide jobs you've already applied to or aren't interested in
 
 ## Companies tracked
