@@ -24,21 +24,7 @@ jobs:
           npm install
           npm run build
 
-      - name: Install service definitions
-        working-directory: /home/bcg600/JobTracker
-        run: |
-          deploy_user="$(stat -c '%U' .)"
-          deploy_dir="$(pwd -P)"
-          for service in jobtracker.service jobtracker-frontend.service; do
-            sed \
-              -e "s|__JOBTRACKER_USER__|${deploy_user}|g" \
-              -e "s|__JOBTRACKER_DIR__|${deploy_dir}|g" \
-              "${service}" | sudo tee "/etc/systemd/system/${service}" >/dev/null
-          done
-          sudo systemctl daemon-reload
-          sudo systemctl enable jobtracker jobtracker-frontend
-
       - name: Restart services
         run: |
-          sudo systemctl restart jobtracker
-          sudo systemctl restart jobtracker-frontend
+          sudo -n /usr/bin/systemctl restart jobtracker
+          sudo -n /usr/bin/systemctl restart jobtracker-frontend

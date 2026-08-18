@@ -35,13 +35,20 @@ class ServiceSupervisionTests(unittest.TestCase):
         self.assertNotIn("serve -s frontend", api_command)
         self.assertIn("npx serve -s frontend/dist", frontend_command)
 
-    def test_deployment_installs_and_restarts_both_services(self):
+    def test_deployment_only_restarts_preinstalled_services(self):
         workflow = (ROOT / ".github" / "workflows" / "deploy.yml").read_text()
 
-        self.assertIn("jobtracker.service jobtracker-frontend.service", workflow)
-        self.assertIn("systemctl daemon-reload", workflow)
-        self.assertIn("systemctl restart jobtracker\n", workflow)
-        self.assertIn("systemctl restart jobtracker-frontend", workflow)
+        self.assertNotIn("sudo tee", workflow)
+        self.assertNotIn("systemctl daemon-reload", workflow)
+        self.assertNotIn("systemctl enable", workflow)
+        self.assertIn(
+            "sudo -n /usr/bin/systemctl restart jobtracker\n",
+            workflow,
+        )
+        self.assertIn(
+            "sudo -n /usr/bin/systemctl restart jobtracker-frontend",
+            workflow,
+        )
 
 
 if __name__ == "__main__":
