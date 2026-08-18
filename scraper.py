@@ -9,6 +9,7 @@ GREENHOUSE_API = "https://boards-api.greenhouse.io/v1/boards/{board_id}/jobs?con
 LEVER_API = "https://api.lever.co/v0/postings/{company}?mode=json&limit=500"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; JobTracker/1.0)"}
+HTTP_TIMEOUT_SECONDS = 20
 
 
 class ScrapeError(RuntimeError):
@@ -38,7 +39,11 @@ def detect_ats(careers_url: str) -> tuple[str, str]:
 
     # Fetch the page and sniff for embedded ATS widgets
     try:
-        resp = requests.get(careers_url, timeout=15, headers=HEADERS)
+        resp = requests.get(
+            careers_url,
+            timeout=HTTP_TIMEOUT_SECONDS,
+            headers=HEADERS,
+        )
         html = resp.text
 
         m = re.search(r'boards\.greenhouse\.io/embed/job_board\?for=(\w+)', html)
@@ -115,7 +120,7 @@ def scrape_greenhouse(board_id: str, company_name: str, source_url: str, us_only
     print(f"  -> Greenhouse API: {url}")
 
     try:
-        resp = requests.get(url, timeout=15, headers=HEADERS)
+        resp = requests.get(url, timeout=HTTP_TIMEOUT_SECONDS, headers=HEADERS)
         resp.raise_for_status()
         data = resp.json()
     except requests.RequestException as exc:
@@ -182,7 +187,7 @@ def scrape_lever(company_id: str, company_name: str, source_url: str) -> list[di
     print(f"  -> Lever API: {url}")
 
     try:
-        resp = requests.get(url, timeout=15, headers=HEADERS)
+        resp = requests.get(url, timeout=HTTP_TIMEOUT_SECONDS, headers=HEADERS)
         resp.raise_for_status()
         data = resp.json()
     except requests.RequestException as exc:
@@ -486,7 +491,7 @@ def scrape_eightfold_v2(careers_url: str, company_name: str) -> list[dict]:
         r = requests.get(api_base, params={
             "domain": domain, "location": location,
             "sort_by": sort_by, "num": page_size, "start": 0,
-        }, headers=HEADERS, timeout=15)
+        }, headers=HEADERS, timeout=HTTP_TIMEOUT_SECONDS)
         if r.status_code != 200:
             message = f"HTTP {r.status_code}: {r.text[:100]}"
             print(f"  Error {message}")
@@ -508,7 +513,7 @@ def scrape_eightfold_v2(careers_url: str, company_name: str) -> list[dict]:
             r = requests.get(api_base, params={
                 "domain": domain, "location": location,
                 "sort_by": sort_by, "num": page_size, "start": start,
-            }, headers=HEADERS, timeout=15)
+            }, headers=HEADERS, timeout=HTTP_TIMEOUT_SECONDS)
             if r.status_code != 200:
                 raise ScrapeError(
                     f"Pagination failed at start={start}: HTTP {r.status_code}"
@@ -547,7 +552,7 @@ def scrape_eightfold_v2(careers_url: str, company_name: str) -> list[dict]:
                 f"{api_base}/{pos_id}",
                 params={"domain": domain},
                 headers=HEADERS,
-                timeout=15,
+                timeout=HTTP_TIMEOUT_SECONDS,
             )
             detail_response.raise_for_status()
             if not _is_eightfold_v2_remote(detail_response.json()):
@@ -726,7 +731,11 @@ def scrape_ashby(slug: str, company_name: str, source_url: str) -> list[dict]:
     print(f"  -> Ashby API: {api_url}")
 
     try:
-        r = requests.get(api_url, headers=HEADERS, timeout=15)
+        r = requests.get(
+            api_url,
+            headers=HEADERS,
+            timeout=HTTP_TIMEOUT_SECONDS,
+        )
         r.raise_for_status()
         data = r.json()
     except requests.RequestException as exc:
@@ -813,7 +822,12 @@ def scrape_icims_phenom(careers_url: str, company_name: str) -> list[dict]:
     while True:
         params = {**base_params, "page": page}
         try:
-            r = requests.get(api_url, params=params, headers=HEADERS, timeout=15)
+            r = requests.get(
+                api_url,
+                params=params,
+                headers=HEADERS,
+                timeout=HTTP_TIMEOUT_SECONDS,
+            )
             r.raise_for_status()
             d = r.json()
         except requests.RequestException as exc:

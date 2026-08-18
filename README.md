@@ -87,6 +87,17 @@ Open `http://localhost:5173` in your browser. Use the **Scan Now** button to tri
 python3 main.py
 ```
 
+### Production services
+
+The deployment installs two independent systemd units:
+
+- `jobtracker.service` runs the API and scheduler. Uvicorn is the directly
+  supervised process and is restarted automatically if it exits.
+- `jobtracker-frontend.service` serves the built frontend separately, so an API
+  restart does not interrupt the frontend.
+
+Both units are refreshed and restarted when the deployment workflow runs.
+
 ## CLI usage
 
 ```bash
