@@ -3,6 +3,7 @@ from datetime import datetime
 from unittest.mock import call, patch
 
 import api
+from scraper import ScrapeResult
 
 
 class SchedulerTests(unittest.TestCase):
@@ -89,7 +90,13 @@ class RunScanTests(unittest.TestCase):
             "company": "Airbnb",
             "url": "https://example.com/airbnb-job",
         }
-        mock_scrape_company.side_effect = [TimeoutError("navigation timeout"), [airbnb_job]]
+        airbnb_jobs = ScrapeResult(
+            [airbnb_job],
+            total_found=10,
+            not_remote=6,
+            keyword_filtered=3,
+        )
+        mock_scrape_company.side_effect = [TimeoutError("navigation timeout"), airbnb_jobs]
 
         with patch.object(api, "COMPANIES", [failed_company, healthy_company]):
             result = api._run_scan()
@@ -109,19 +116,28 @@ class RunScanTests(unittest.TestCase):
         successful_result = mock_record_company_result.call_args_list[1].kwargs
         self.assertEqual(successful_result["company"], "Airbnb")
         self.assertEqual(successful_result["status"], "success")
+        self.assertEqual(successful_result["jobs_found"], 10)
+        self.assertEqual(successful_result["not_remote"], 6)
+        self.assertEqual(successful_result["keyword_filtered"], 3)
         mock_finish_scan_run.assert_called_once_with(
             scan_id=42,
             status="partial",
             successful_companies=1,
             failed_companies=1,
+            total_found=10,
             total_seen=1,
+            not_remote=6,
+            keyword_filtered=3,
             new_jobs=1,
         )
         self.assertEqual(result, {
             "scan_id": 42,
             "status": "partial",
             "new_jobs": 1,
+            "total_found": 10,
             "total_seen": 1,
+            "not_remote": 6,
+            "keyword_filtered": 3,
             "successful_companies": 1,
             "failed_companies": 1,
         })

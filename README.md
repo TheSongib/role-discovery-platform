@@ -197,8 +197,22 @@ Jobs are stored in `jobs.db` (SQLite). Key fields:
 
 The dashboard shows the latest manual, scheduled, or CLI scan as `running`,
 `success`, `partial`, or `failed`. Expand **View details** to see each company's
-ATS, matching-job count, and error message. The same data is available from:
+ATS, filter counts, matching-job count, and error message. The same data is
+available from:
 
 ```text
 GET /api/scans/latest
 ```
+
+For each successful company scan, the status reports the number of jobs returned
+by the configured ATS query, the number removed by include/exclude title terms,
+and the number removed by remote/US eligibility checks. Keyword filtering runs
+first, so the categories are mutually exclusive:
+
+```text
+jobs found = removed by keywords + not remote + matching
+```
+
+Some company URLs already contain ATS-side location, department, or seniority
+filters. Jobs excluded by those server-side filters are not returned to the app
+and therefore cannot be included in these counts.
