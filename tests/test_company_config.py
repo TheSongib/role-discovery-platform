@@ -15,6 +15,15 @@ NEW_COMPANIES = {
     "Samsara": ("greenhouse", "samsara"),
     "Temporal": ("greenhouse", "temporaltechnologies"),
     "Mercury": ("greenhouse", "mercury"),
+    "Vercel": ("greenhouse", "vercel"),
+    "ClickHouse": ("greenhouse", "clickhouse"),
+    "LaunchDarkly": ("greenhouse", "launchdarkly"),
+    "OpenRouter": ("ashby", "openrouter"),
+    "Render": ("ashby", "render"),
+    "WorkOS": ("ashby", "workos"),
+    "Modern Treasury": ("ashby", "moderntreasury"),
+    "Omni": ("ashby", "omni"),
+    "Centralize": ("ashby", "centralize"),
 }
 
 

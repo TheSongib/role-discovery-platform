@@ -251,6 +251,63 @@ class AshbyRemoteFilteringTests(unittest.TestCase):
 
         self.assertEqual(len(jobs), 1)
 
+    @patch("scraper.requests.get")
+    def test_keeps_us_remote_secondary_location_with_usa_country(self, mock_get):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "jobs": [{
+                "title": "Software Engineer",
+                "location": "San Francisco",
+                "workplaceType": None,
+                "isRemote": None,
+                "address": {
+                    "postalAddress": {"addressCountry": "USA"},
+                },
+                "secondaryLocations": [{
+                    "location": "Remote",
+                    "address": {
+                        "postalAddress": {"addressCountry": "USA"},
+                    },
+                }],
+                "jobUrl": "https://example.com/jobs/us-remote-secondary",
+            }],
+        }
+        mock_get.return_value = response
+
+        jobs = scrape_ashby("example", "Example", "https://example.com/careers")
+
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0]["location"], "San Francisco; Remote")
+
+    @patch("scraper.requests.get")
+    def test_remote_secondary_location_must_also_be_in_us(self, mock_get):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "jobs": [{
+                "title": "Software Engineer",
+                "location": "San Francisco",
+                "workplaceType": None,
+                "isRemote": None,
+                "address": {
+                    "postalAddress": {"addressCountry": "United States"},
+                },
+                "secondaryLocations": [{
+                    "location": "Remote - Canada",
+                    "address": {
+                        "postalAddress": {"addressCountry": "Canada"},
+                    },
+                }],
+                "jobUrl": "https://example.com/jobs/canada-remote-secondary",
+            }],
+        }
+        mock_get.return_value = response
+
+        jobs = scrape_ashby("example", "Example", "https://example.com/careers")
+
+        self.assertEqual(jobs, [])
+
 
 class EightfoldV2RemoteFilteringTests(unittest.TestCase):
     @staticmethod
