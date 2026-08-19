@@ -195,6 +195,7 @@ def scrape_greenhouse(board_id: str, company_name: str, source_url: str, us_only
             "department": department,
             "description": None,
             "date_posted": date_posted,
+            "ats_updated_at": job.get("updated_at") or None,
             "date_found": _now(),
             "last_seen": _now(),
             "source_url": source_url,
@@ -773,6 +774,12 @@ def scrape_workday(careers_url: str, company_name: str, us_only: bool = False) -
         board_path = parsed.path.rstrip("/")
         job_url = f"{base_url}{board_path}{ext_path}" if ext_path.startswith("/") else ext_path
 
+        posted_on = posting.get("postedOn", "")
+        date_posted = _parse_workday_posted(posted_on)
+        # Capped relative values move forward every day when converted to a
+        # date, so they cannot reliably distinguish a repost from an old job.
+        ats_updated_at = None if "+" in posted_on else date_posted
+
         jobs.append({
             "title": title,
             "company": company_name,
@@ -781,7 +788,8 @@ def scrape_workday(careers_url: str, company_name: str, us_only: bool = False) -
             "is_remote": 1,
             "department": "",
             "description": None,
-            "date_posted": _parse_workday_posted(posting.get("postedOn", "")),
+            "date_posted": date_posted,
+            "ats_updated_at": ats_updated_at,
             "date_found": _now(),
             "last_seen": _now(),
             "source_url": careers_url,
@@ -895,7 +903,9 @@ def scrape_ashby(slug: str, company_name: str, source_url: str) -> list[dict]:
             "is_remote": 1,
             "department": posting.get("department", "") or posting.get("team", ""),
             "description": None,
+            # Ashby documents publishedAt as the time the job was last published.
             "date_posted": posting.get("publishedAt"),
+            "ats_updated_at": posting.get("publishedAt"),
             "date_found": _now(),
             "last_seen": _now(),
             "source_url": source_url,

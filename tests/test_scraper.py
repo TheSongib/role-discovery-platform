@@ -10,6 +10,7 @@ from scraper import (
     scrape_eightfold,
     scrape_eightfold_v2,
     scrape_greenhouse,
+    scrape_workday,
 )
 
 
@@ -52,6 +53,7 @@ class GreenhouseRemoteFilteringTests(unittest.TestCase):
             "departments": [],
             "metadata": None,
             "first_published": "2026-07-06T11:43:23-04:00",
+            "updated_at": "2026-08-18T08:30:00-04:00",
         }
 
     @patch("scraper.requests.get")
@@ -106,6 +108,9 @@ class GreenhouseRemoteFilteringTests(unittest.TestCase):
         self.assertEqual(jobs.total_found, 1)
         self.assertEqual(jobs.not_remote, 0)
         self.assertEqual(jobs.keyword_filtered, 0)
+        self.assertEqual(
+            jobs[0]["ats_updated_at"], "2026-08-18T08:30:00-04:00"
+        )
 
     @patch("scraper.requests.get")
     def test_reports_mutually_exclusive_filter_counts(self, mock_get):
@@ -243,6 +248,7 @@ class AshbyRemoteFilteringTests(unittest.TestCase):
                     "postalAddress": {"addressCountry": "United States"},
                 },
                 "jobUrl": "https://example.com/jobs/remote",
+                "publishedAt": "2026-08-18T12:00:00Z",
             }],
         }
         mock_get.return_value = response
@@ -250,6 +256,7 @@ class AshbyRemoteFilteringTests(unittest.TestCase):
         jobs = scrape_ashby("example", "Example", "https://example.com/careers")
 
         self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0]["ats_updated_at"], jobs[0]["date_posted"])
 
     @patch("scraper.requests.get")
     def test_keeps_us_remote_secondary_location_with_usa_country(self, mock_get):
@@ -307,6 +314,44 @@ class AshbyRemoteFilteringTests(unittest.TestCase):
         jobs = scrape_ashby("example", "Example", "https://example.com/careers")
 
         self.assertEqual(jobs, [])
+
+
+class WorkdayRepostSignalTests(unittest.TestCase):
+    @patch("scraper.requests.post")
+    def test_uses_stable_relative_posting_date_but_ignores_capped_value(
+        self, mock_post
+    ):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "total": 2,
+            "jobPostings": [
+                {
+                    "title": "Software Engineer",
+                    "locationsText": "Remote - United States",
+                    "externalPath": "/job/engineer",
+                    "postedOn": "Posted 3 Days Ago",
+                },
+                {
+                    "title": "Security Engineer",
+                    "locationsText": "Remote - United States",
+                    "externalPath": "/job/security",
+                    "postedOn": "Posted 30+ Days Ago",
+                },
+            ],
+        }
+        mock_post.return_value = response
+
+        jobs = scrape_workday(
+            "https://acme.wd5.myworkdayjobs.com/en-US/jobs",
+            "Acme",
+        )
+
+        self.assertEqual(len(jobs), 2)
+        self.assertIsNotNone(jobs[0]["date_posted"])
+        self.assertEqual(jobs[0]["ats_updated_at"], jobs[0]["date_posted"])
+        self.assertIsNotNone(jobs[1]["date_posted"])
+        self.assertIsNone(jobs[1]["ats_updated_at"])
 
 
 class EightfoldV2RemoteFilteringTests(unittest.TestCase):
