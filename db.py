@@ -6,6 +6,7 @@ from typing import Iterator
 
 DB_PATH = Path(__file__).parent / "jobs.db"
 MISSED_SCAN_DELETE_THRESHOLD = 3
+REPOST_MIN_AGE = timedelta(days=1)
 
 
 def _utc_now() -> str:
@@ -36,6 +37,7 @@ def init_db():
                 department  TEXT,
                 description TEXT,
                 date_posted TEXT,
+                ats_updated_at TEXT,
                 date_found  TEXT NOT NULL,
                 last_seen   TEXT NOT NULL,
                 missed_scans INTEGER NOT NULL DEFAULT 0,
@@ -48,6 +50,7 @@ def init_db():
             "ALTER TABLE jobs ADD COLUMN last_seen TEXT",
             "ALTER TABLE jobs ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE jobs ADD COLUMN missed_scans INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE jobs ADD COLUMN ats_updated_at TEXT",
         ]:
             try:
                 conn.execute(sql)
@@ -246,22 +249,102 @@ def get_latest_scan() -> dict | None:
         return result
 
 
+def _parse_datetime(value: str | None) -> datetime | None:
+    """Parse an ISO date or datetime into a timezone-aware datetime."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _is_qualifying_repost(existing: sqlite3.Row, job: dict) -> bool:
+    """Return whether a hidden job has a sufficiently old, advanced ATS signal."""
+    if not existing["hidden"]:
+        return False
+
+    incoming_update = job.get("ats_updated_at")
+    if not incoming_update:
+        return False
+
+    stored_update = existing["ats_updated_at"]
+    if not stored_update:
+        # Existing databases have no historical ATS baseline. Only bootstrap a
+        # repost when the current ATS update is demonstrably newer than when we
+        # first found the job; otherwise establish the baseline without surfacing.
+        ats_update = _parse_datetime(incoming_update)
+        first_found = _parse_datetime(existing["date_found"])
+        signal_changed = bool(
+            ats_update and first_found and ats_update > first_found
+        )
+    else:
+        incoming_time = _parse_datetime(incoming_update)
+        stored_time = _parse_datetime(stored_update)
+        if incoming_time and stored_time:
+            signal_changed = incoming_time > stored_time
+        else:
+            signal_changed = incoming_update != stored_update
+
+    first_found = _parse_datetime(existing["date_found"])
+    seen_now = _parse_datetime(job.get("date_found"))
+    old_enough = bool(
+        first_found
+        and seen_now
+        and seen_now - first_found >= REPOST_MIN_AGE
+    )
+    return signal_changed and old_enough
+
+
 def upsert_job(job: dict) -> bool:
     """
-    Insert a new job or update last_seen on an existing one.
-    Returns True if the job was new, False if it already existed.
-    date_found is never overwritten — it always reflects the first time we saw the job.
+    Insert a job or update scan metadata on an existing one.
+
+    Return True for a newly inserted or newly resurfaced job. A qualifying
+    repost gets fresh found/posted dates so the dashboard and notification path
+    treat it as a new appearance.
     """
     with get_conn() as conn:
         existing = conn.execute(
-            "SELECT id FROM jobs WHERE title = ? AND company = ? AND url = ?",
+            """
+            SELECT id, hidden, date_found, ats_updated_at
+            FROM jobs
+            WHERE title = ? AND company = ? AND url = ?
+            """,
             (job["title"], job["company"], job["url"]),
         ).fetchone()
 
         if existing:
+            if _is_qualifying_repost(existing, job):
+                conn.execute(
+                    """
+                    UPDATE jobs
+                    SET last_seen = ?, missed_scans = 0, hidden = 0,
+                        date_found = ?, date_posted = ?, ats_updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        job["last_seen"],
+                        job["date_found"],
+                        job["ats_updated_at"],
+                        job["ats_updated_at"],
+                        existing["id"],
+                    ),
+                )
+                conn.commit()
+                return True
+
             conn.execute(
-                "UPDATE jobs SET last_seen = ?, missed_scans = 0 WHERE id = ?",
-                (job["last_seen"], existing["id"]),
+                """
+                UPDATE jobs
+                SET last_seen = ?, missed_scans = 0,
+                    ats_updated_at = COALESCE(?, ats_updated_at)
+                WHERE id = ?
+                """,
+                (job["last_seen"], job.get("ats_updated_at"), existing["id"]),
             )
             conn.commit()
             return False
@@ -270,12 +353,25 @@ def upsert_job(job: dict) -> bool:
                 """
                 INSERT INTO jobs
                     (title, company, location, url, is_remote, department,
-                     description, date_posted, date_found, last_seen, source_url)
+                     description, date_posted, ats_updated_at, date_found,
+                     last_seen, source_url)
                 VALUES
-                    (:title, :company, :location, :url, :is_remote, :department,
-                     :description, :date_posted, :date_found, :last_seen, :source_url)
+                    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                job,
+                (
+                    job["title"],
+                    job["company"],
+                    job.get("location"),
+                    job["url"],
+                    job.get("is_remote", 0),
+                    job.get("department"),
+                    job.get("description"),
+                    job.get("date_posted"),
+                    job.get("ats_updated_at"),
+                    job["date_found"],
+                    job["last_seen"],
+                    job.get("source_url"),
+                ),
             )
             conn.commit()
             return True
