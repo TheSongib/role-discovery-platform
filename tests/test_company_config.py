@@ -1,4 +1,5 @@
 import unittest
+from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
 
 from config import COMPANIES
@@ -42,6 +43,13 @@ class NewCompanyConfigTests(unittest.TestCase):
         names = [company["name"] for company in COMPANIES]
 
         self.assertEqual(len(names), len(set(names)))
+
+    def test_github_uses_current_remote_and_us_facets(self):
+        github = next(company for company in COMPANIES if company["name"] == "GitHub")
+        query = parse_qs(urlparse(github["careers_url"]).query)
+
+        self.assertEqual(query["tags6"], ["Remote"])
+        self.assertEqual(query["locations"], [",,United States"])
 
     @patch("scraper.scrape_ashby", return_value=[])
     @patch("scraper.scrape_greenhouse", return_value=[])

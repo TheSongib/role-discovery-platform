@@ -60,8 +60,8 @@ COMPANIES = [
     },
     {
         "name": "GitHub",
-        # tags6=Yes means remote-eligible; locations=,,United States filters to US
-        "careers_url": "https://www.github.careers/careers-home/jobs?tags6=Yes&locations=,,United%20States",
+        # tags6=Remote selects remote roles; locations=,,United States filters to US
+        "careers_url": "https://www.github.careers/careers-home/jobs?tags6=Remote&locations=,,United%20States",
         "ats": "icims_phenom",
     },
     {
