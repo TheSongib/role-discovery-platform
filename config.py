@@ -61,8 +61,7 @@ COMPANIES = [
     {
         "name": "GitHub",
         # tags6=Remote selects remote roles; locations=,,United States filters to US
-        "careers_url": "https://www.github.careers/careers-home/jobs?tags6=Remote&locations=,,United%20States",
-        "ats": "icims_phenom",
+        "careers_url": "https://www.github.careers/careers-home/jobs?tags6=Remote&locations=,,United%2        "ats": "icims_phenom",
     },
     {
         "name": "Mozilla",
@@ -169,7 +168,7 @@ COMPANIES = [
     {
         "name": "Plaid",
         "careers_url": "https://plaid.com/careers/",
-        "ats": "lever",
+        "ats": "ashby",
         "board_id": "plaid",
     },
     {
@@ -278,8 +277,8 @@ COMPANIES = [
     {
         "name": "Temporal",
         "careers_url": "https://temporal.io/careers",
-        "ats": "greenhouse",
-        "board_id": "temporaltechnologies",
+        "ats": "ashby",
+        "board_id": "temporal",
     },
     {
         "name": "Mercury",
@@ -295,8 +294,8 @@ COMPANIES = [
     },
     {
         "name": "ClickHouse",
-        "careers_url": "https://job-boards.greenhouse.io/clickhouse",
-        "ats": "greenhouse",
+        "careers_url": "https://clickhouse.com/company/careers",
+        "ats": "ashby",
         "board_id": "clickhouse",
     },
     {
