@@ -1,0 +1,14 @@
+.git
+.github
+.venv
+__pycache__
+*.py[cod]
+*.db
+.env
+frontend/node_modules
+frontend/dist
+infra
+k8s
+tests
+*.service
+*.md

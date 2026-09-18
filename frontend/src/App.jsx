@@ -533,7 +533,7 @@ export default function App() {
               <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
                 scanResult.error || scanResult.status === 'failed'
                   ? 'bg-red-50 text-red-600'
-                  : scanResult.status === 'partial'
+                  : scanResult.status === 'partial' || scanResult.status === 'already_running'
                     ? 'bg-amber-50 text-amber-700'
                   : scanResult.new_jobs > 0
                     ? 'bg-emerald-50 text-emerald-700'
@@ -541,6 +541,8 @@ export default function App() {
               }`}>
                 {scanResult.error || scanResult.status === 'failed'
                   ? 'Scan failed'
+                  : scanResult.status === 'already_running'
+                    ? 'Scan already running'
                   : scanResult.status === 'partial'
                     ? `${scanResult.failed_companies} failed`
                   : scanResult.new_jobs > 0

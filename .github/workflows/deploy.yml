@@ -1,30 +1,160 @@
-name: Deploy to Home Server
+name: Test and deploy to AWS k3s
 
 on:
   push:
     branches:
       - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  deploy:
-    runs-on: self-hosted
-
+  test:
+    runs-on: ubuntu-latest
     steps:
-      - name: Pull latest code
-        working-directory: /home/bcg600/JobTracker
-        run: git pull origin main
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
 
       - name: Install Python dependencies
-        working-directory: /home/bcg600/JobTracker
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt -r requirements-dev.txt
 
-      - name: Install and build frontend
-        working-directory: /home/bcg600/JobTracker/frontend
-        run: |
-          npm install
-          npm run build
+      - name: Run Python tests
+        run: python -m unittest discover -s tests
 
-      - name: Restart services
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm ci && npm run build
+
+  deploy:
+    # Deploy only when explicitly requested; normal pushes still run tests.
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TARGET_AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+      DEPLOYMENT_BUCKET: ${{ vars.DEPLOYMENT_BUCKET }}
+      EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
+      ECR_REPOSITORY_URI: ${{ vars.ECR_REPOSITORY_URI }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check deployment configuration
         run: |
-          sudo -n /usr/bin/systemctl restart jobtracker
-          sudo -n /usr/bin/systemctl restart jobtracker-frontend
+          test -n "$TARGET_AWS_REGION"
+          test -n "$AWS_DEPLOY_ROLE_ARN"
+          test -n "$DEPLOYMENT_BUCKET"
+          test -n "$EC2_INSTANCE_ID"
+          test -n "$ECR_REPOSITORY_URI"
+
+      - name: Get short-lived AWS credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Log in to Amazon ECR Public
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: public
+
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/arm64
+          push: true
+          tags: |
+            ${{ env.ECR_REPOSITORY_URI }}:${{ github.sha }}
+            ${{ env.ECR_REPOSITORY_URI }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Upload Kubernetes deployment bundle
+        id: bundle
+        run: |
+          tar -czf deployment.tar.gz k8s
+          BUNDLE_URI="s3://$DEPLOYMENT_BUCKET/deployments/${GITHUB_SHA}.tar.gz"
+          aws s3 cp deployment.tar.gz "$BUNDLE_URI" --region "$TARGET_AWS_REGION"
+          echo "uri=$BUNDLE_URI" >> "$GITHUB_OUTPUT"
+
+      - name: Start the portfolio instance
+        run: |
+          aws ec2 start-instances \
+            --region "$TARGET_AWS_REGION" \
+            --instance-ids "$EC2_INSTANCE_ID"
+          aws ec2 wait instance-status-ok \
+            --region "$TARGET_AWS_REGION" \
+            --instance-ids "$EC2_INSTANCE_ID"
+
+          for _ in $(seq 1 60); do
+            PING_STATUS=$(aws ssm describe-instance-information \
+              --region "$TARGET_AWS_REGION" \
+              --filters "Key=InstanceIds,Values=$EC2_INSTANCE_ID" \
+              --query 'InstanceInformationList[0].PingStatus' \
+              --output text 2>/dev/null || true)
+            [[ "$PING_STATUS" == "Online" ]] && break
+            sleep 5
+          done
+          [[ "$PING_STATUS" == "Online" ]] || {
+            echo "Instance did not become available in Systems Manager" >&2
+            exit 1
+          }
+
+      - name: Deploy through Systems Manager
+        env:
+          BUNDLE_URI: ${{ steps.bundle.outputs.uri }}
+          IMAGE: ${{ env.ECR_REPOSITORY_URI }}:${{ github.sha }}
+        run: |
+          PARAMS=$(jq -nc --arg bundle "$BUNDLE_URI" --arg image "$IMAGE" \
+            '{commands: ["sudo /usr/local/bin/jobtracker-deploy \($bundle) \($image)"]}')
+          COMMAND_ID=$(aws ssm send-command \
+            --region "$TARGET_AWS_REGION" \
+            --instance-ids "$EC2_INSTANCE_ID" \
+            --document-name AWS-RunShellScript \
+            --parameters "$PARAMS" \
+            --query 'Command.CommandId' \
+            --output text)
+
+          for _ in $(seq 1 120); do
+            STATUS=$(aws ssm get-command-invocation \
+              --region "$TARGET_AWS_REGION" \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$EC2_INSTANCE_ID" \
+              --query Status \
+              --output text 2>/dev/null || true)
+            case "$STATUS" in
+              Success) exit 0 ;;
+              Failed|Cancelled|TimedOut)
+                aws ssm get-command-invocation \
+                  --region "$TARGET_AWS_REGION" \
+                  --command-id "$COMMAND_ID" \
+                  --instance-id "$EC2_INSTANCE_ID"
+                exit 1
+                ;;
+            esac
+            sleep 5
+          done
+          echo "Deployment did not finish within 10 minutes" >&2
+          exit 1

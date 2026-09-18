@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec > >(tee /var/log/role-discovery-bootstrap.log | logger -t role-discovery-bootstrap -s 2>/dev/console) 2>&1
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y curl jq unzip
+
+# Ubuntu 24.04 ARM does not publish the awscli apt package. Install AWS CLI v2
+# from AWS's official ARM64 bundle so the deployment helper can download its
+# Kubernetes bundle from S3.
+if ! command -v aws >/dev/null 2>&1; then
+  curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" \
+    -o /tmp/awscliv2.zip
+  unzip -q /tmp/awscliv2.zip -d /tmp
+  /tmp/aws/install
+  rm -rf /tmp/aws /tmp/awscliv2.zip
+fi
+
+# The encrypted root EBS volume also backs this emergency swap. It lets short
+# Chromium peaks degrade gracefully on the 2 GiB node without paying for a
+# larger instance. Kubelet is configured before swap is activated.
+if [[ ! -f /swapfile ]]; then
+  fallocate -l 2G /swapfile
+  chmod 0600 /swapfile
+  mkswap /swapfile
+fi
+
+curl -sfL https://get.k3s.io | \
+  INSTALL_K3S_CHANNEL="${k3s_channel}" \
+  INSTALL_K3S_EXEC="server --node-name ${node_name} --write-kubeconfig-mode 600 --disable=local-storage" \
+  sh -
+
+mkdir -p /var/lib/rancher/k3s/agent/etc/kubelet.conf.d
+cat >/var/lib/rancher/k3s/agent/etc/kubelet.conf.d/10-limited-swap.conf <<'EOF'
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+failSwapOn: false
+memorySwap:
+  swapBehavior: LimitedSwap
+EOF
+
+if ! grep -q '^/swapfile ' /etc/fstab; then
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+swapon /swapfile
+systemctl restart k3s
+
+cat >/usr/local/bin/jobtracker-deploy <<'DEPLOY_SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -ne 2 ]]; then
+  echo "usage: jobtracker-deploy S3_BUNDLE_URI IMAGE" >&2
+  exit 2
+fi
+
+BUNDLE_URI="$1"
+IMAGE="$2"
+case "$BUNDLE_URI" in
+  s3://*/deployments/*.tar.gz) ;;
+  *) echo "Unexpected deployment bundle URI" >&2; exit 2 ;;
+esac
+case "$IMAGE" in
+  public.ecr.aws/*) ;;
+  *) echo "Unexpected image registry" >&2; exit 2 ;;
+esac
+
+WORK_DIR=$(mktemp -d)
+trap 'rm -rf "$WORK_DIR"' EXIT
+aws s3 cp "$BUNDLE_URI" "$WORK_DIR/deployment.tar.gz" --region "${aws_region}"
+tar -xzf "$WORK_DIR/deployment.tar.gz" -C "$WORK_DIR"
+MANIFEST="$WORK_DIR/k8s/aws.yaml"
+[[ -f "$MANIFEST" ]] || { echo "Bundle does not contain k8s/aws.yaml" >&2; exit 1; }
+sed -i \
+  -e "s|IMAGE_PLACEHOLDER|$IMAGE|g" \
+  -e "s|AWS_REGION_PLACEHOLDER|${aws_region}|g" \
+  -e "s|DYNAMODB_JOBS_TABLE_PLACEHOLDER|${jobs_table_name}|g" \
+  -e "s|DYNAMODB_STATE_TABLE_PLACEHOLDER|${state_table_name}|g" \
+  -e "s|DYNAMODB_SCAN_RETENTION_DAYS_PLACEHOLDER|${scan_history_retention_days}|g" \
+  "$MANIFEST"
+k3s kubectl apply -f "$MANIFEST"
+k3s kubectl -n jobtracker rollout status deployment/jobtracker --timeout=10m
+# Keep the small portfolio root disk from filling with superseded image layers.
+k3s crictl rmi --prune || true
+DEPLOY_SCRIPT
+chmod 0755 /usr/local/bin/jobtracker-deploy
+
+%{ if auto_stop_after_minutes > 0 ~}
+cat >/etc/systemd/system/portfolio-auto-stop.service <<'EOF'
+[Unit]
+Description=Stop the portfolio EC2 instance
+After=network-online.target k3s.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/shutdown -h now
+EOF
+
+cat >/etc/systemd/system/portfolio-auto-stop.timer <<'EOF'
+[Unit]
+Description=Limit the cost of an accidentally left-running portfolio instance
+
+[Timer]
+OnBootSec=${auto_stop_after_minutes}m
+AccuracySec=1m
+
+[Install]
+WantedBy=timers.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now portfolio-auto-stop.timer
+%{ endif ~}

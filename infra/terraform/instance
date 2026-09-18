@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+cd "$SCRIPT_DIR"
+
+if ! command -v aws >/dev/null 2>&1; then
+  echo "AWS CLI is required" >&2
+  exit 1
+fi
+
+INSTANCE_ID=$(./tf output -raw instance_id)
+REGION=$(./tf output -raw aws_region)
+
+usage() {
+  echo "usage: ./instance start|stop|status|tunnel" >&2
+  exit 2
+}
+
+case "${1:-}" in
+  start)
+    aws ec2 start-instances --region "$REGION" --instance-ids "$INSTANCE_ID" >/dev/null
+    echo "Waiting for $INSTANCE_ID to pass EC2 health checks..."
+    aws ec2 wait instance-status-ok --region "$REGION" --instance-ids "$INSTANCE_ID"
+    echo "Instance is running. Bootstrap services may need another minute before the SSM tunnel is ready."
+    ;;
+  stop)
+    aws ec2 stop-instances --region "$REGION" --instance-ids "$INSTANCE_ID" >/dev/null
+    echo "Stop requested for $INSTANCE_ID. EBS, DynamoDB, and small S3/ECR charges continue while EC2 is stopped."
+    ;;
+  status)
+    aws ec2 describe-instances \
+      --region "$REGION" \
+      --instance-ids "$INSTANCE_ID" \
+      --query 'Reservations[0].Instances[0].{State:State.Name,PublicIP:PublicIpAddress,Type:InstanceType}' \
+      --output table
+    ;;
+  tunnel)
+    aws ssm start-session \
+      --region "$REGION" \
+      --target "$INSTANCE_ID" \
+      --document-name AWS-StartPortForwardingSession \
+      --parameters '{"portNumber":["80"],"localPortNumber":["8080"]}'
+    ;;
+  *) usage ;;
+esac

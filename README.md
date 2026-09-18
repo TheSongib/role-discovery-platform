@@ -1,13 +1,16 @@
 # JobTracker
 
-A personal job board scraper that monitors company career pages for remote US engineering and security roles, stores them in a local SQLite database, and displays them in a React web UI.
+A personal job board scraper that monitors company career pages for remote US
+engineering and security roles and displays them in a React web UI. Local
+development uses SQLite; the AWS deployment uses DynamoDB so the Kubernetes
+workloads are stateless.
 
 ## What it does
 
 - Scrapes career pages from a configurable list of companies
 - Filters for **remote US** roles in **software engineering, security engineering, SRE, DevOps, and IAM**
 - Excludes senior/leadership titles (staff, principal, director, architect, manager)
-- Stores results in a local SQLite database with deduplication and repost detection
+- Stores results in SQLite locally or DynamoDB on AWS, with deduplication and repost detection
 - Removes jobs after three consecutive successful company scans no longer find them
 - Records every scan and each company's success or failure so broken sources are visible
 - Scans every 15 minutes on weekdays from 7 AM to 8 PM Eastern and hourly at all other times
@@ -45,7 +48,8 @@ A personal job board scraper that monitors company career pages for remote US en
 JobTracker/
 ├── config.py      # Company list and keyword filters
 ├── scraper.py     # ATS scrapers (Greenhouse, Lever, Eightfold, Eightfold v2, Workday)
-├── db.py          # SQLite schema and queries
+├── db.py          # Persistence facade (SQLite locally, DynamoDB on AWS)
+├── dynamodb_store.py # DynamoDB persistence implementation
 ├── api.py         # FastAPI backend (serves job data + triggers scans)
 ├── main.py        # CLI scraper entrypoint
 ├── export.py      # CSV/JSON export
@@ -71,6 +75,20 @@ python3 -m playwright install chromium
 cd frontend && npm install
 ```
 
+## AWS and k3s deployment
+
+The repository includes a production container, a single-node k3s manifest,
+Terraform for the AWS infrastructure, and automated GitHub Actions deployment.
+The web pod and scan CronJob store durable state in two encrypted DynamoDB
+tables, so neither workload depends on a particular pod or node disk.
+
+Start with the step-by-step [AWS + k3s deployment guide](docs/AWS_K3S_DEPLOYMENT.md).
+The deployment is private by default and is accessed through an AWS Systems
+Manager tunnel because the application does not currently have user
+authentication. It is cost-optimized for a continuously running personal
+portfolio: one Graviton `t4g.small`, a 20 GiB root disk, no load balancer or
+Elastic IP, and DynamoDB on-demand billing.
+
 ## Running
 
 ```bash
@@ -87,16 +105,17 @@ Open `http://localhost:5173` in your browser. Use the **Scan Now** button to tri
 python3 main.py
 ```
 
-### Production services
+### Legacy home-server services
 
-The deployment installs two independent systemd units:
+The former home-server deployment used two independent systemd units, which
+remain in the repository only as a rollback reference:
 
 - `jobtracker.service` runs the API and scheduler. Uvicorn is the directly
   supervised process and is restarted automatically if it exits.
 - `jobtracker-frontend.service` serves the built frontend separately, so an API
   restart does not interrupt the frontend.
 
-Both units are refreshed and restarted when the deployment workflow runs.
+The current deployment workflow targets AWS k3s and does not use these units.
 
 ## CLI usage
 
@@ -182,7 +201,10 @@ Location is additionally required to indicate **US** (checked separately from `R
 
 ## Database
 
-Jobs are stored in `jobs.db` (SQLite). Key fields:
+Local development stores jobs in `jobs.db` (SQLite). Set
+`DATABASE_BACKEND=dynamodb` plus `DYNAMODB_JOBS_TABLE` and
+`DYNAMODB_STATE_TABLE` to use the AWS backend; the Kubernetes ConfigMap does
+this automatically. Key fields are consistent across both backends:
 
 | Field | Description |
 |---|---|
@@ -193,7 +215,9 @@ Jobs are stored in `jobs.db` (SQLite). Key fields:
 | `ats_updated_at` | ATS timestamp used to detect an updated/reposted listing (when available) |
 | `hidden` | Set to 1 when hidden from the UI |
 
-`jobs.db` is local only — do not commit it to git.
+`jobs.db` is local only—do not commit it to git. The AWS tables use on-demand
+capacity, server-side encryption, point-in-time recovery, and deletion
+protection. See the deployment guide for the one-time SQLite migration command.
 
 After each successful company scan, matching stored jobs that were not returned
 have `missed_scans` incremented. Seeing a job again resets the counter to zero.

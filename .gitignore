@@ -2,6 +2,7 @@ jobs.db
 keywords.json
 .DS_Store
 __pycache__/
+.venv/
 *.pyc
 *.pyo
 node_modules/
@@ -10,3 +11,10 @@ frontend/dist/
 frontend/.env
 .env
 *.local
+.terraform/
+terraform.tfvars
+*.auto.tfvars
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log

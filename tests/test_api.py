@@ -66,6 +66,15 @@ class SchedulerTests(unittest.TestCase):
 
 
 class RunScanTests(unittest.TestCase):
+    @patch("api.release_scan_lock")
+    @patch("api.acquire_scan_lock", return_value=False)
+    def test_overlapping_scan_is_skipped(self, mock_acquire, mock_release):
+        result = api._run_scan("scheduled")
+
+        self.assertEqual(result["status"], "already_running")
+        mock_acquire.assert_called_once()
+        mock_release.assert_not_called()
+
     @patch("api._notify")
     @patch("api.finish_scan_run")
     @patch("api.record_company_scan_result")

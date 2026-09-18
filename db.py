@@ -1,12 +1,26 @@
+import os
 import sqlite3
+import threading
 from contextlib import contextmanager
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 from pathlib import Path
 from typing import Iterator
 
-DB_PATH = Path(__file__).parent / "jobs.db"
+DATA_DIR = Path(os.getenv("DATA_DIR", Path(__file__).parent))
+DB_PATH = DATA_DIR / "jobs.db"
 MISSED_SCAN_DELETE_THRESHOLD = 3
 REPOST_MIN_AGE = timedelta(days=1)
+_SQLITE_SCAN_LOCK = threading.Lock()
+
+
+def _uses_dynamodb() -> bool:
+    return os.getenv("DATABASE_BACKEND", "sqlite").strip().lower() == "dynamodb"
+
+
+def _dynamo():
+    import dynamodb_store
+
+    return dynamodb_store
 
 
 def _utc_now() -> str:
@@ -25,6 +39,12 @@ def get_conn() -> Iterator[sqlite3.Connection]:
 
 
 def init_db():
+    if _uses_dynamodb():
+        # Terraform owns the DynamoDB schema. Keeping this a no-op makes the
+        # existing call sites backend-independent without issuing a Describe
+        # request before every API operation.
+        return
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with get_conn() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS jobs (
@@ -113,7 +133,9 @@ def init_db():
         conn.commit()
 
 
-def create_scan_run(trigger: str, total_companies: int) -> int:
+def create_scan_run(trigger: str, total_companies: int) -> int | str:
+    if _uses_dynamodb():
+        return _dynamo().create_scan_run(trigger, total_companies)
     with get_conn() as conn:
         cursor = conn.execute(
             """
@@ -127,7 +149,7 @@ def create_scan_run(trigger: str, total_companies: int) -> int:
 
 
 def record_company_scan_result(
-    scan_id: int,
+    scan_id: int | str,
     company: str,
     ats: str,
     status: str,
@@ -139,6 +161,20 @@ def record_company_scan_result(
     error: str | None,
     started_at: str,
 ):
+    if _uses_dynamodb():
+        return _dynamo().record_company_scan_result(
+            scan_id=scan_id,
+            company=company,
+            ats=ats,
+            status=status,
+            jobs_found=jobs_found,
+            jobs_seen=jobs_seen,
+            not_remote=not_remote,
+            keyword_filtered=keyword_filtered,
+            new_jobs=new_jobs,
+            error=error,
+            started_at=started_at,
+        )
     with get_conn() as conn:
         conn.execute(
             """
@@ -167,7 +203,7 @@ def record_company_scan_result(
 
 
 def finish_scan_run(
-    scan_id: int,
+    scan_id: int | str,
     status: str,
     successful_companies: int,
     failed_companies: int,
@@ -177,6 +213,18 @@ def finish_scan_run(
     keyword_filtered: int,
     new_jobs: int,
 ):
+    if _uses_dynamodb():
+        return _dynamo().finish_scan_run(
+            scan_id=scan_id,
+            status=status,
+            successful_companies=successful_companies,
+            failed_companies=failed_companies,
+            total_found=total_found,
+            total_seen=total_seen,
+            not_remote=not_remote,
+            keyword_filtered=keyword_filtered,
+            new_jobs=new_jobs,
+        )
     with get_conn() as conn:
         conn.execute(
             """
@@ -203,6 +251,8 @@ def finish_scan_run(
 
 
 def get_latest_scan() -> dict | None:
+    if _uses_dynamodb():
+        return _dynamo().get_latest_scan()
     with get_conn() as conn:
         run = conn.execute(
             "SELECT * FROM scan_runs ORDER BY id DESC LIMIT 1"
@@ -307,6 +357,9 @@ def upsert_job(job: dict) -> bool:
     repost gets fresh found/posted dates so the dashboard and notification path
     treat it as a new appearance.
     """
+    if _uses_dynamodb():
+        return _dynamo().upsert_job(job)
+
     with get_conn() as conn:
         existing = conn.execute(
             """
@@ -384,6 +437,9 @@ def reconcile_company_jobs(company: str, seen_jobs: list[dict]) -> int:
     from the result are deleted on their third consecutive successful miss.
     The caller must not invoke this after a failed or incomplete scrape.
     """
+    if _uses_dynamodb():
+        return _dynamo().reconcile_company_jobs(company, seen_jobs)
+
     seen_keys = {
         (job.get("title"), job.get("url"))
         for job in seen_jobs
@@ -431,7 +487,13 @@ def reconcile_company_jobs(company: str, seen_jobs: list[dict]) -> int:
         return len(delete_ids)
 
 
-def get_all_jobs(remote_only: bool = False, max_age_days: int = None) -> list[sqlite3.Row]:
+def get_all_jobs(
+    remote_only: bool = False,
+    max_age_days: int | None = None,
+) -> list[sqlite3.Row] | list[dict]:
+    if _uses_dynamodb():
+        return _dynamo().get_all_jobs(remote_only, max_age_days)
+
     conditions = []
     if remote_only:
         conditions.append("is_remote = 1")
@@ -447,12 +509,57 @@ def get_all_jobs(remote_only: bool = False, max_age_days: int = None) -> list[sq
         return conn.execute(query).fetchall()
 
 
-def set_hidden(job_id: int, hidden: bool):
+def list_jobs(show_hidden: bool = False, max_age_days: int = 3) -> list[dict]:
+    """Return dashboard jobs without exposing backend-specific query code."""
+    if _uses_dynamodb():
+        return _dynamo().list_jobs(show_hidden, max_age_days)
+
+    if not DB_PATH.exists():
+        return []
+
+    conditions = []
+    parameters = []
+    if not show_hidden:
+        conditions.append("hidden = 0")
+    if max_age_days > 0:
+        cutoff = (date.today() - timedelta(days=max_age_days)).isoformat()
+        conditions.append("date_found >= ?")
+        parameters.append(cutoff)
+
     with get_conn() as conn:
-        conn.execute("UPDATE jobs SET hidden = ? WHERE id = ?", (int(hidden), job_id))
+        query = "SELECT * FROM jobs"
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        query += " ORDER BY DATE(date_found) DESC, date_posted DESC"
+        return [dict(row) for row in conn.execute(query, parameters).fetchall()]
+
+
+def set_hidden(job_id: int | str, hidden: bool):
+    if _uses_dynamodb():
+        return _dynamo().set_hidden(str(job_id), hidden)
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE jobs SET hidden = ? WHERE id = ?",
+            (int(hidden), int(job_id)),
+        )
         conn.commit()
 
 
 def job_count() -> int:
+    if _uses_dynamodb():
+        return _dynamo().job_count()
     with get_conn() as conn:
         return conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+
+
+def acquire_scan_lock(owner: str, timeout_seconds: int = 3600) -> bool:
+    if _uses_dynamodb():
+        return _dynamo().acquire_scan_lock(owner, timeout_seconds)
+    return _SQLITE_SCAN_LOCK.acquire(blocking=False)
+
+
+def release_scan_lock(owner: str) -> None:
+    if _uses_dynamodb():
+        _dynamo().release_scan_lock(owner)
+    elif _SQLITE_SCAN_LOCK.locked():
+        _SQLITE_SCAN_LOCK.release()

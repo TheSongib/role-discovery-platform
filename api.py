@@ -1,7 +1,7 @@
 import asyncio
 import os
-import sqlite3
-from datetime import date, datetime, timedelta, timezone
+import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -12,12 +12,15 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from db import (
+    acquire_scan_lock,
     create_scan_run,
     finish_scan_run,
     get_latest_scan,
     init_db,
+    list_jobs as query_jobs,
     reconcile_company_jobs,
     record_company_scan_result,
+    release_scan_lock,
     set_hidden,
     upsert_job,
 )
@@ -27,7 +30,6 @@ from keywords_store import get_keywords, save_keywords
 
 NTFY_TOPIC = os.getenv("NTFY_TOPIC", "")
 
-DB_PATH = Path(__file__).parent / "jobs.db"
 FRONTEND_DIST = Path(__file__).parent / "frontend" / "dist"
 
 app = FastAPI(title="JobTracker API")
@@ -35,6 +37,12 @@ app = FastAPI(title="JobTracker API")
 EASTERN_TIME = ZoneInfo("America/New_York")
 WEEKDAY_SCAN_START_HOUR = 7
 WEEKDAY_SCAN_END_HOUR = 20
+
+
+@app.get("/api/health")
+def health():
+    """Lightweight Kubernetes liveness/readiness endpoint."""
+    return {"status": "ok"}
 
 
 def _is_frequent_scan_window(when: datetime) -> bool:
@@ -71,6 +79,9 @@ def _next_scheduled_scan(when: datetime | None = None) -> datetime:
 
 @app.on_event("startup")
 async def start_scheduler():
+    if os.getenv("ENABLE_SCHEDULER", "true").lower() not in {"1", "true", "yes"}:
+        return
+
     async def scheduler():
         while True:
             now = datetime.now(timezone.utc)
@@ -95,33 +106,7 @@ app.add_middleware(
 
 @app.get("/api/jobs")
 def list_jobs(show_hidden: bool = False, max_age_days: int = 3):
-    if not DB_PATH.exists():
-        return []
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    if max_age_days > 0:
-        cutoff = (date.today() - timedelta(days=max_age_days)).isoformat()
-        rows = conn.execute(
-            """
-            SELECT * FROM jobs
-            WHERE date_found >= ?
-              AND (hidden = 0 OR ? = 1)
-            ORDER BY DATE(date_found) DESC, date_posted DESC
-            """,
-            (cutoff, int(show_hidden)),
-        ).fetchall()
-    else:
-        # max_age_days=0 means all time — no date filter
-        rows = conn.execute(
-            """
-            SELECT * FROM jobs
-            WHERE (hidden = 0 OR ? = 1)
-            ORDER BY DATE(date_found) DESC, date_posted DESC
-            """,
-            (int(show_hidden),),
-        ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    return query_jobs(show_hidden=show_hidden, max_age_days=max_age_days)
 
 
 def _notify(new_jobs: list[dict]):
@@ -147,6 +132,25 @@ def _notify(new_jobs: list[dict]):
 
 
 def _run_scan(trigger: str = "manual") -> dict:
+    lock_owner = uuid.uuid4().hex
+    if not acquire_scan_lock(lock_owner):
+        return {
+            "status": "already_running",
+            "new_jobs": 0,
+            "total_found": 0,
+            "total_seen": 0,
+            "not_remote": 0,
+            "keyword_filtered": 0,
+            "successful_companies": 0,
+            "failed_companies": 0,
+        }
+    try:
+        return _run_scan_unlocked(trigger)
+    finally:
+        release_scan_lock(lock_owner)
+
+
+def _run_scan_unlocked(trigger: str = "manual") -> dict:
     init_db()
     scan_id = create_scan_run(trigger, len(COMPANIES))
     total_new = 0
@@ -265,7 +269,7 @@ class HidePayload(BaseModel):
 
 
 @app.patch("/api/jobs/{job_id}")
-def patch_job(job_id: int, payload: HidePayload):
+def patch_job(job_id: str, payload: HidePayload):
     init_db()
     set_hidden(job_id, payload.hidden)
     return {"ok": True}
