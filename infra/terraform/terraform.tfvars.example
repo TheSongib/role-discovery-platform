@@ -2,7 +2,7 @@ aws_region = "us-east-1"
 
 # This fresh repository uses GitHub's immutable owner/repository ID subject.
 # Override this only if deploying from a different repository.
-github_oidc_subject = "repo:TheSongib@61258600/role-discovery-platform@1366373286:ref:refs/heads/main"
+github_oidc_subject = "repo:TheSongib@61258600/role-discovery-platform@1366373286:ref:refs/heads/*"
 
 # If this AWS account already trusts GitHub Actions, reuse that singleton
 # provider instead of trying to create a second one.

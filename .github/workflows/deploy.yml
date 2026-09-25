@@ -38,8 +38,11 @@ jobs:
         run: npm ci && npm run build
 
   deploy:
-    # Deploy only when explicitly requested; normal pushes still run tests.
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    # Main deploys automatically. A manual dispatch may deploy any selected
+    # branch to the same environment for pre-merge validation.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
     needs: test
     runs-on: ubuntu-latest
     permissions:
