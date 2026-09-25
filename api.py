@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -6,8 +7,8 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import requests
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import BackgroundTasks, Depends, FastAPI, Query, Request, status
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -27,8 +28,18 @@ from db import (
 from config import COMPANIES
 from scraper import scrape_company
 from keywords_store import get_keywords, save_keywords
+from auth import (
+    auth_status,
+    begin_login,
+    finish_login,
+    logout,
+    optional_admin,
+    require_admin,
+)
 
 NTFY_TOPIC = os.getenv("NTFY_TOPIC", "")
+ORIGIN_VERIFY_SECRET = os.getenv("ORIGIN_VERIFY_SECRET", "")
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 
 FRONTEND_DIST = Path(__file__).parent / "frontend" / "dist"
 
@@ -37,6 +48,31 @@ app = FastAPI(title="JobTracker API")
 EASTERN_TIME = ZoneInfo("America/New_York")
 WEEKDAY_SCAN_START_HOUR = 7
 WEEKDAY_SCAN_END_HOUR = 20
+
+
+@app.middleware("http")
+async def enforce_origin_boundary(request: Request, call_next):
+    """Reject direct-origin traffic and add browser security headers."""
+    if ORIGIN_VERIFY_SECRET and request.url.path != "/api/health":
+        supplied = request.headers.get("x-origin-verify", "")
+        if not hmac.compare_digest(supplied, ORIGIN_VERIFY_SECRET):
+            return JSONResponse(status_code=403, content={"detail": "Forbidden"})
+
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; "
+        "form-action 'self'; img-src 'self' data:; script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'"
+    )
+    if PUBLIC_BASE_URL.startswith("https://"):
+        response.headers["Strict-Transport-Security"] = (
+            "max-age=31536000; includeSubDomains"
+        )
+    return response
 
 
 @app.get("/api/health")
@@ -96,17 +132,18 @@ async def start_scheduler():
     asyncio.create_task(scheduler())
 
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["GET", "PATCH", "POST", "PUT"],
-    allow_headers=["*"],
-)
-
-
 @app.get("/api/jobs")
-def list_jobs(show_hidden: bool = False, max_age_days: int = 3):
-    return query_jobs(show_hidden=show_hidden, max_age_days=max_age_days)
+def list_jobs(
+    show_hidden: bool = False,
+    max_age_days: int = 3,
+    admin: dict | None = Depends(optional_admin),
+):
+    # Hidden jobs are private administrative state even though active jobs are
+    # intentionally visible without an account.
+    return query_jobs(
+        show_hidden=show_hidden and admin is not None,
+        max_age_days=max_age_days,
+    )
 
 
 def _notify(new_jobs: list[dict]):
@@ -251,11 +288,18 @@ def _run_scan_unlocked(trigger: str = "manual") -> dict:
     }
 
 
-@app.post("/api/scan")
-async def run_scan():
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(None, _run_scan, "manual")
-    return result
+@app.post("/api/scan", status_code=status.HTTP_202_ACCEPTED)
+def run_scan(
+    background_tasks: BackgroundTasks,
+    _admin: dict = Depends(require_admin),
+):
+    # API Gateway has a 30-second integration timeout, while a complete scan
+    # takes several minutes. DynamoDB's scan lock still prevents overlap.
+    background_tasks.add_task(_run_scan, "manual")
+    return {
+        "status": "accepted",
+        "accepted_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @app.get("/api/scans/latest")
@@ -269,7 +313,11 @@ class HidePayload(BaseModel):
 
 
 @app.patch("/api/jobs/{job_id}")
-def patch_job(job_id: str, payload: HidePayload):
+def patch_job(
+    job_id: str,
+    payload: HidePayload,
+    _admin: dict = Depends(require_admin),
+):
     init_db()
     set_hidden(job_id, payload.hidden)
     return {"ok": True}
@@ -286,9 +334,36 @@ class KeywordsPayload(BaseModel):
 
 
 @app.put("/api/config/keywords")
-def update_keyword_config(payload: KeywordsPayload):
+def update_keyword_config(
+    payload: KeywordsPayload,
+    _admin: dict = Depends(require_admin),
+):
     save_keywords(payload.title_keywords, payload.title_exclude_keywords)
     return {"ok": True}
+
+
+@app.get("/api/auth/status")
+def get_auth_status(request: Request):
+    return auth_status(request)
+
+
+@app.get("/api/auth/login", response_class=RedirectResponse)
+def login():
+    return begin_login()
+
+
+@app.get("/api/auth/callback", response_class=RedirectResponse)
+def auth_callback(
+    request: Request,
+    code: str = Query(min_length=1),
+    state_value: str = Query(alias="state", min_length=1),
+):
+    return finish_login(request, code, state_value)
+
+
+@app.get("/api/auth/logout", response_class=RedirectResponse)
+def end_session():
+    return logout()
 
 
 # Serve built frontend in production (after `npm run build`)

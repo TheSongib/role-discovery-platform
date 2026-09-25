@@ -62,9 +62,9 @@ resource "aws_security_group" "node" {
   vpc_id      = aws_vpc.main.id
 
   dynamic "ingress" {
-    for_each = toset(var.allowed_http_cidrs)
+    for_each = toset(var.enable_public_gateway_origin ? ["0.0.0.0/0"] : var.allowed_http_cidrs)
     content {
-      description = "JobTracker HTTP from an explicitly approved CIDR"
+      description = var.enable_public_gateway_origin ? "API Gateway origin; application verifies a secret header" : "JobTracker HTTP from an explicitly approved CIDR"
       protocol    = "tcp"
       from_port   = 80
       to_port     = 80
@@ -266,6 +266,11 @@ resource "aws_iam_role_policy" "node_storage" {
         Resource = "${aws_s3_bucket.deployments.arn}/deployments/*"
       },
       {
+        Effect   = "Allow"
+        Action   = ["ssm:GetParameter"]
+        Resource = aws_ssm_parameter.origin_secret.arn
+      },
+      {
         Effect = "Allow"
         Action = [
           "dynamodb:BatchWriteItem",
@@ -322,13 +327,23 @@ resource "aws_instance" "node" {
   }
 
   user_data = templatefile("${path.module}/templates/user-data.sh.tftpl", {
-    auto_stop_after_minutes     = var.auto_stop_after_minutes
-    aws_region                  = var.aws_region
-    jobs_table_name             = aws_dynamodb_table.jobs.name
-    k3s_channel                 = var.k3s_channel
-    node_name                   = local.node_name
-    scan_history_retention_days = var.scan_history_retention_days
-    state_table_name            = aws_dynamodb_table.state.name
+    auto_stop_after_minutes = var.auto_stop_after_minutes
+    aws_region              = var.aws_region
+    deployment_script = templatefile("${path.module}/templates/jobtracker-deploy.sh.tftpl", {
+      aws_region                  = var.aws_region
+      cognito_admin_group         = aws_cognito_user_group.admins.name
+      cognito_client_id           = aws_cognito_user_pool_client.web.id
+      cognito_domain              = "https://${aws_cognito_user_pool_domain.login.domain}.auth.${var.aws_region}.amazoncognito.com"
+      cognito_region              = var.aws_region
+      cognito_user_pool_id        = aws_cognito_user_pool.admin.id
+      jobs_table_name             = aws_dynamodb_table.jobs.name
+      origin_secret_parameter     = aws_ssm_parameter.origin_secret.name
+      public_base_url             = aws_apigatewayv2_api.app.api_endpoint
+      scan_history_retention_days = var.scan_history_retention_days
+      state_table_name            = aws_dynamodb_table.state.name
+    })
+    k3s_channel = var.k3s_channel
+    node_name   = local.node_name
   })
 
   # The guest's automatic poweroff must stop, rather than terminate, EC2.
@@ -341,7 +356,7 @@ resource "aws_instance" "node" {
   lifecycle {
     # User data runs only at first boot. Updating it in-place restarts EC2 but
     # does not rerun the script, so handle bootstrap changes explicitly and
-    # avoid needlessly rotating the auto-assigned public IP.
+    # avoid needlessly restarting the stable Elastic IP-backed node.
     ignore_changes = [ami, user_data]
   }
 

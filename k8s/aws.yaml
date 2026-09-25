@@ -16,6 +16,13 @@ data:
   DYNAMODB_STATE_TABLE: DYNAMODB_STATE_TABLE_PLACEHOLDER
   DYNAMODB_SCAN_RETENTION_DAYS: "DYNAMODB_SCAN_RETENTION_DAYS_PLACEHOLDER"
   ENABLE_SCHEDULER: "false"
+  AUTH_ENABLED: "true"
+  PUBLIC_BASE_URL: PUBLIC_BASE_URL_PLACEHOLDER
+  COGNITO_REGION: COGNITO_REGION_PLACEHOLDER
+  COGNITO_USER_POOL_ID: COGNITO_USER_POOL_ID_PLACEHOLDER
+  COGNITO_CLIENT_ID: COGNITO_CLIENT_ID_PLACEHOLDER
+  COGNITO_DOMAIN: COGNITO_DOMAIN_PLACEHOLDER
+  COGNITO_ADMIN_GROUP: COGNITO_ADMIN_GROUP_PLACEHOLDER
   PYTHONUNBUFFERED: "1"
 ---
 apiVersion: apps/v1
@@ -57,6 +64,8 @@ spec:
             - secretRef:
                 name: jobtracker-secrets
                 optional: true
+            - secretRef:
+                name: jobtracker-origin-secret
           resources:
             requests:
               cpu: 50m

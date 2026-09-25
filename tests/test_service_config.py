@@ -58,6 +58,8 @@ class KubernetesDeploymentTests(unittest.TestCase):
         self.assertIn("- scheduled_scan.py", manifest)
         self.assertIn("path: /api/health", manifest)
         self.assertIn("image: IMAGE_PLACEHOLDER", manifest)
+        self.assertIn('AUTH_ENABLED: "true"', manifest)
+        self.assertIn("name: jobtracker-origin-secret", manifest)
         self.assertNotIn("PersistentVolume", manifest)
         self.assertNotIn("mountPath: /data", manifest)
 
@@ -67,8 +69,23 @@ class KubernetesDeploymentTests(unittest.TestCase):
         user_data = (
             ROOT / "infra" / "terraform" / "templates" / "user-data.sh.tftpl"
         ).read_text()
+        deploy_helper = (
+            ROOT
+            / "infra"
+            / "terraform"
+            / "templates"
+            / "jobtracker-deploy.sh.tftpl"
+        ).read_text()
 
-        self.assertNotIn('resource "aws_eip"', main)
+        auth = (ROOT / "infra" / "terraform" / "auth.tf").read_text()
+
+        self.assertIn('resource "aws_eip" "node"', auth)
+        self.assertIn('resource "aws_apigatewayv2_api" "app"', auth)
+        self.assertIn('resource "aws_cognito_user_pool" "admin"', auth)
+        self.assertIn('mfa_configuration        = "ON"', auth)
+        self.assertIn('deletion_protection      = "ACTIVE"', auth)
+        self.assertIn('allow_admin_create_user_only = true', auth)
+        self.assertIn('"overwrite:header.x-origin-verify"', auth)
         self.assertNotIn('resource "aws_ebs_volume"', main)
         self.assertIn('resource "aws_dynamodb_table" "jobs"', main)
         self.assertIn('resource "aws_dynamodb_table" "state"', main)
@@ -77,7 +94,9 @@ class KubernetesDeploymentTests(unittest.TestCase):
         self.assertIn("http_put_response_hop_limit = 2", main)
         self.assertIn("portfolio-auto-stop.timer", user_data)
         self.assertIn("swapBehavior: LimitedSwap", user_data)
-        self.assertIn("crictl rmi --prune", user_data)
+        self.assertIn("crictl rmi --prune", deploy_helper)
+        self.assertIn("aws ssm get-parameter", deploy_helper)
+        self.assertIn("jobtracker-origin-secret", deploy_helper)
         self.assertNotIn("jobtracker-backup", user_data)
 
         terraform_wrapper = (ROOT / "infra" / "terraform" / "tf").read_text()

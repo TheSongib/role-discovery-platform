@@ -51,6 +51,7 @@ JobTracker/
 ├── db.py          # Persistence facade (SQLite locally, DynamoDB on AWS)
 ├── dynamodb_store.py # DynamoDB persistence implementation
 ├── api.py         # FastAPI backend (serves job data + triggers scans)
+├── auth.py        # Cognito OAuth/PKCE login and admin authorization
 ├── main.py        # CLI scraper entrypoint
 ├── export.py      # CSV/JSON export
 ├── dev.sh         # One-command dev server startup
@@ -83,11 +84,12 @@ The web pod and scan CronJob store durable state in two encrypted DynamoDB
 tables, so neither workload depends on a particular pod or node disk.
 
 Start with the step-by-step [AWS + k3s deployment guide](docs/AWS_K3S_DEPLOYMENT.md).
-The deployment is private by default and is accessed through an AWS Systems
-Manager tunnel because the application does not currently have user
-authentication. It is cost-optimized for a continuously running personal
-portfolio: one Graviton `t4g.small`, a 20 GiB root disk, no load balancer or
-Elastic IP, and DynamoDB on-demand billing.
+The deployed dashboard is public and read-only. Cognito login, mandatory TOTP
+MFA, and `admins` group membership protect scans and configuration changes.
+API Gateway provides HTTPS and verifies requests to the stable Elastic IP
+origin with a generated secret. It is cost-optimized for a continuously
+running personal portfolio: one Graviton `t4g.small`, a 20 GiB root disk, no
+load balancer, and DynamoDB on-demand billing.
 
 ## Running
 

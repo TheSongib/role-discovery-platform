@@ -48,42 +48,7 @@ swapon /swapfile
 systemctl restart k3s
 
 cat >/usr/local/bin/jobtracker-deploy <<'DEPLOY_SCRIPT'
-#!/usr/bin/env bash
-set -euo pipefail
-
-if [[ $# -ne 2 ]]; then
-  echo "usage: jobtracker-deploy S3_BUNDLE_URI IMAGE" >&2
-  exit 2
-fi
-
-BUNDLE_URI="$1"
-IMAGE="$2"
-case "$BUNDLE_URI" in
-  s3://*/deployments/*.tar.gz) ;;
-  *) echo "Unexpected deployment bundle URI" >&2; exit 2 ;;
-esac
-case "$IMAGE" in
-  public.ecr.aws/*) ;;
-  *) echo "Unexpected image registry" >&2; exit 2 ;;
-esac
-
-WORK_DIR=$(mktemp -d)
-trap 'rm -rf "$WORK_DIR"' EXIT
-aws s3 cp "$BUNDLE_URI" "$WORK_DIR/deployment.tar.gz" --region "${aws_region}"
-tar -xzf "$WORK_DIR/deployment.tar.gz" -C "$WORK_DIR"
-MANIFEST="$WORK_DIR/k8s/aws.yaml"
-[[ -f "$MANIFEST" ]] || { echo "Bundle does not contain k8s/aws.yaml" >&2; exit 1; }
-sed -i \
-  -e "s|IMAGE_PLACEHOLDER|$IMAGE|g" \
-  -e "s|AWS_REGION_PLACEHOLDER|${aws_region}|g" \
-  -e "s|DYNAMODB_JOBS_TABLE_PLACEHOLDER|${jobs_table_name}|g" \
-  -e "s|DYNAMODB_STATE_TABLE_PLACEHOLDER|${state_table_name}|g" \
-  -e "s|DYNAMODB_SCAN_RETENTION_DAYS_PLACEHOLDER|${scan_history_retention_days}|g" \
-  "$MANIFEST"
-k3s kubectl apply -f "$MANIFEST"
-k3s kubectl -n jobtracker rollout status deployment/jobtracker --timeout=10m
-# Keep the small portfolio root disk from filling with superseded image layers.
-k3s crictl rmi --prune || true
+${deployment_script}
 DEPLOY_SCRIPT
 chmod 0755 /usr/local/bin/jobtracker-deploy
 

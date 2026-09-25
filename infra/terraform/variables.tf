@@ -45,14 +45,20 @@ variable "k3s_channel" {
 }
 
 variable "allowed_http_cidrs" {
-  description = "CIDRs allowed to reach HTTP port 80. Leave empty and use SSM port forwarding. Never use 0.0.0.0/0 until authentication and TLS are configured."
+  description = "CIDRs allowed to reach the origin directly during bootstrap. Production users should use the HTTPS API Gateway URL."
   type        = list(string)
   default     = []
 
   validation {
     condition     = !contains(var.allowed_http_cidrs, "0.0.0.0/0") && !contains(var.allowed_http_cidrs, "::/0")
-    error_message = "This application has write endpoints and no login yet; unrestricted public HTTP is intentionally blocked."
+    error_message = "Use enable_public_gateway_origin for the guarded public origin instead of adding an unrestricted CIDR here."
   }
+}
+
+variable "enable_public_gateway_origin" {
+  description = "Open origin port 80 so API Gateway can reach it. Enable only after the origin-verification secret is deployed to k3s."
+  type        = bool
+  default     = false
 }
 
 variable "github_oidc_subject" {

@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -ne 2 ]]; then
+  echo "usage: jobtracker-deploy S3_BUNDLE_URI IMAGE" >&2
+  exit 2
+fi
+
+BUNDLE_URI="$1"
+IMAGE="$2"
+case "$BUNDLE_URI" in
+  s3://*/deployments/*.tar.gz) ;;
+  *) echo "Unexpected deployment bundle URI" >&2; exit 2 ;;
+esac
+case "$IMAGE" in
+  public.ecr.aws/*) ;;
+  *) echo "Unexpected image registry" >&2; exit 2 ;;
+esac
+
+WORK_DIR=$(mktemp -d)
+trap 'rm -rf "$WORK_DIR"' EXIT
+aws s3 cp "$BUNDLE_URI" "$WORK_DIR/deployment.tar.gz" --region "${aws_region}"
+tar -xzf "$WORK_DIR/deployment.tar.gz" -C "$WORK_DIR"
+MANIFEST="$WORK_DIR/k8s/aws.yaml"
+[[ -f "$MANIFEST" ]] || { echo "Bundle does not contain k8s/aws.yaml" >&2; exit 1; }
+
+ORIGIN_VERIFY_SECRET=$(aws ssm get-parameter \
+  --name "${origin_secret_parameter}" \
+  --with-decryption \
+  --query Parameter.Value \
+  --output text \
+  --region "${aws_region}")
+k3s kubectl create namespace jobtracker --dry-run=client -o yaml | \
+  k3s kubectl apply -f -
+k3s kubectl -n jobtracker create secret generic jobtracker-origin-secret \
+  --from-literal=ORIGIN_VERIFY_SECRET="$ORIGIN_VERIFY_SECRET" \
+  --dry-run=client -o yaml | k3s kubectl apply -f -
+unset ORIGIN_VERIFY_SECRET
+
+sed -i \
+  -e "s|IMAGE_PLACEHOLDER|$IMAGE|g" \
+  -e "s|AWS_REGION_PLACEHOLDER|${aws_region}|g" \
+  -e "s|DYNAMODB_JOBS_TABLE_PLACEHOLDER|${jobs_table_name}|g" \
+  -e "s|DYNAMODB_STATE_TABLE_PLACEHOLDER|${state_table_name}|g" \
+  -e "s|DYNAMODB_SCAN_RETENTION_DAYS_PLACEHOLDER|${scan_history_retention_days}|g" \
+  -e "s|PUBLIC_BASE_URL_PLACEHOLDER|${public_base_url}|g" \
+  -e "s|COGNITO_REGION_PLACEHOLDER|${cognito_region}|g" \
+  -e "s|COGNITO_USER_POOL_ID_PLACEHOLDER|${cognito_user_pool_id}|g" \
+  -e "s|COGNITO_CLIENT_ID_PLACEHOLDER|${cognito_client_id}|g" \
+  -e "s|COGNITO_DOMAIN_PLACEHOLDER|${cognito_domain}|g" \
+  -e "s|COGNITO_ADMIN_GROUP_PLACEHOLDER|${cognito_admin_group}|g" \
+  "$MANIFEST"
+k3s kubectl apply -f "$MANIFEST"
+k3s kubectl -n jobtracker rollout status deployment/jobtracker --timeout=10m
+# Keep the small portfolio root disk from filling with superseded image layers.
+k3s crictl rmi --prune || true

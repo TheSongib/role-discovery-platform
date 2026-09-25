@@ -8,13 +8,13 @@ github_oidc_subject = "repo:TheSongib@61258600/role-discovery-platform@136637328
 # provider instead of trying to create a second one.
 # github_oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
 
-# Safest default: keep the site private and use the SSM tunnel output.
+# Keep the origin private during the first deployment phase.
 allowed_http_cidrs = []
+enable_public_gateway_origin = false
 
 # This personal application scans continuously, so the node stays online.
 # Set a value of at least 60 only for an on-demand demo environment.
 auto_stop_after_minutes = 0
 
-# To allow only your current public IP over plain HTTP, use a /32. Do not use
-# 0.0.0.0/0; the application does not have authentication yet.
+# To test the guarded origin before enabling API Gateway access, use your /32.
 # allowed_http_cidrs = ["203.0.113.10/32"]

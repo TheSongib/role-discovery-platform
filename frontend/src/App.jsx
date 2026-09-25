@@ -89,10 +89,10 @@ function CompanyBadge({ company }) {
   )
 }
 
-function SkeletonRow() {
+function SkeletonRow({ canManage }) {
   return (
     <tr className="animate-pulse border-b border-slate-50">
-      {[72, 220, 110, 150, 70, 90].map((w, i) => (
+      {[72, 220, 110, 150, 70, 90, ...(canManage ? [32] : [])].map((w, i) => (
         <td key={i} className="px-5 py-4">
           <div className="h-3.5 rounded bg-slate-100" style={{ width: w }} />
         </td>
@@ -101,10 +101,10 @@ function SkeletonRow() {
   )
 }
 
-function EmptyState() {
+function EmptyState({ canManage, columnCount }) {
   return (
     <tr>
-      <td colSpan={7} className="px-6 py-24 text-center">
+      <td colSpan={columnCount} className="px-6 py-24 text-center">
         <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-slate-100">
           <svg className="h-7 w-7 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
@@ -113,17 +113,19 @@ function EmptyState() {
         </div>
         <p className="text-base font-semibold text-slate-700">No listings yet</p>
         <p className="mt-1 text-sm text-slate-400">
-          Run <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-slate-600">Scan Now</code> to pull jobs
+          {canManage
+            ? <>Run <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-slate-600">Scan Now</code> to pull jobs</>
+            : 'Scheduled scans will populate this dashboard.'}
         </p>
       </td>
     </tr>
   )
 }
 
-function ErrorState({ message }) {
+function ErrorState({ message, columnCount }) {
   return (
     <tr>
-      <td colSpan={7} className="px-6 py-24 text-center">
+      <td colSpan={columnCount} className="px-6 py-24 text-center">
         <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-red-50">
           <svg className="h-7 w-7 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
@@ -422,6 +424,8 @@ export default function App() {
   const [maxAge, setMaxAge]         = useState(3)
   const [showSettings, setShowSettings] = useState(false)
   const [latestScan, setLatestScan] = useState(null)
+  const [auth, setAuth]             = useState({ enabled: false, authenticated: false, can_manage: false, username: null })
+  const [authLoaded, setAuthLoaded] = useState(false)
 
   const AGE_OPTIONS = [
     { label: '24 hours', value: 1 },
@@ -430,16 +434,31 @@ export default function App() {
     { label: 'All time', value: 0 },
   ]
 
-  function loadJobs(age) {
+  function loadAuth() {
+    return fetch('/api/auth/status', { cache: 'no-store' })
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
+      .then(data => {
+        setAuth(data)
+        if (!data.can_manage) setShowHidden(false)
+      })
+      .catch(() => setAuth({ enabled: false, authenticated: false, can_manage: false, username: null }))
+      .finally(() => setAuthLoaded(true))
+  }
+
+  function loadJobs(age, canManage = auth.can_manage) {
     setLoading(true)
     setError(null)
-    fetch(`/api/jobs?show_hidden=true&max_age_days=${age}`)
+    fetch(`/api/jobs?show_hidden=${canManage}&max_age_days=${age}`)
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
       .then(data => { setJobs(data); setLoading(false) })
       .catch(e  => { setError(e.message); setLoading(false) })
   }
 
-  useEffect(() => { loadJobs(maxAge) }, [maxAge])
+  useEffect(() => { loadAuth() }, [])
+
+  useEffect(() => {
+    if (authLoaded) loadJobs(maxAge, auth.can_manage)
+  }, [maxAge, auth.can_manage, authLoaded])
 
   function loadLatestScan() {
     return fetch('/api/scans/latest', { cache: 'no-store' })
@@ -450,49 +469,70 @@ export default function App() {
 
   useEffect(() => {
     loadLatestScan()
-    const scanIsActive = scanning || latestScan?.status === 'running'
+    const scanIsActive = scanning || scanResult?.status === 'accepted' || latestScan?.status === 'running'
     const interval = setInterval(loadLatestScan, scanIsActive ? 1_000 : 60_000)
     return () => clearInterval(interval)
-  }, [scanning, latestScan?.status])
+  }, [scanning, scanResult?.status, latestScan?.status])
+
+  useEffect(() => {
+    if (scanResult?.status !== 'accepted' || !latestScan?.started_at) return
+    const isRequestedScan = new Date(latestScan.started_at) >= new Date(scanResult.accepted_at)
+    if (isRequestedScan && latestScan.status !== 'running') {
+      setScanResult(latestScan)
+      loadJobs(maxAge)
+    }
+  }, [latestScan?.status, latestScan?.started_at, scanResult?.status])
 
   async function startScan() {
     setScanning(true)
     setScanResult(null)
     try {
       const r = await fetch('/api/scan', { method: 'POST' })
+      if (r.status === 401 || r.status === 403) {
+        await loadAuth()
+        throw new Error('Admin session expired')
+      }
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       const result = await r.json()
       setScanResult(result)
-      loadJobs(maxAge)
       loadLatestScan()
-    } catch {
-      setScanResult({ error: true })
+    } catch (error) {
+      setScanResult({ error: error.message || 'Scan failed' })
       loadLatestScan()
+      setScanning(false)
     } finally {
       setScanning(false)
     }
   }
 
-  function toggleHidden(job) {
+  async function toggleHidden(job) {
     const nextHidden = !job.hidden
     // Optimistic update
     setJobs(prev => prev.map(j => j.id === job.id ? { ...j, hidden: nextHidden ? 1 : 0 } : j))
-    fetch(`/api/jobs/${job.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ hidden: nextHidden }),
-    }).catch(() => loadJobs(maxAge)) // revert on error
+    try {
+      const response = await fetch(`/api/jobs/${job.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hidden: nextHidden }),
+      })
+      if (response.status === 401 || response.status === 403) await loadAuth()
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    } catch {
+      loadJobs(maxAge)
+    }
   }
 
   const visible   = jobs.filter(j => !j.hidden)
   const hidden    = jobs.filter(j =>  j.hidden)
   const companies = [...new Set(visible.map(j => j.company))]
   const lastScan  = latestScan?.finished_at ?? latestScan?.started_at ?? ''
+  const tableColumns = auth.can_manage ? 7 : 6
+  const scanPending = scanning || scanResult?.status === 'accepted'
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900">
 
-      {showSettings && <KeywordsModal onClose={() => setShowSettings(false)} />}
+      {showSettings && auth.can_manage && <KeywordsModal onClose={() => setShowSettings(false)} />}
 
       {/* ── Header ── */}
       <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/90 backdrop-blur-sm">
@@ -529,7 +569,7 @@ export default function App() {
             </select>
 
             {/* Scan result flash */}
-            {scanResult && !scanning && (
+            {scanResult && !scanPending && (
               <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
                 scanResult.error || scanResult.status === 'failed'
                   ? 'bg-red-50 text-red-600'
@@ -540,7 +580,7 @@ export default function App() {
                     : 'bg-slate-100 text-slate-500'
               }`}>
                 {scanResult.error || scanResult.status === 'failed'
-                  ? 'Scan failed'
+                  ? (typeof scanResult.error === 'string' ? scanResult.error : 'Scan failed')
                   : scanResult.status === 'already_running'
                     ? 'Scan already running'
                   : scanResult.status === 'partial'
@@ -551,56 +591,70 @@ export default function App() {
               </span>
             )}
 
-            {/* Settings button */}
-            <button
-              onClick={() => setShowSettings(s => !s)}
-              title="Keyword filters"
-              className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-500 shadow-sm transition-colors hover:border-slate-300 hover:text-slate-700"
-            >
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                  d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-            </button>
-
-            {/* Show hidden toggle */}
-            <button
-              onClick={() => setShowHidden(h => !h)}
-              className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
-                showHidden
-                  ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
-                  : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-700'
-              }`}
-            >
-              {showHidden ? <EyeIcon /> : <EyeSlashIcon />}
-              {showHidden ? `Showing hidden (${hidden.length})` : `Hidden (${hidden.length})`}
-            </button>
-
-            {/* Scan button */}
-            <button
-              onClick={startScan}
-              disabled={scanning}
-              className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {scanning ? (
-                <>
-                  <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                  Scanning…
-                </>
-              ) : (
-                <>
-                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            {auth.can_manage ? (
+              <>
+                <button
+                  onClick={() => setShowSettings(s => !s)}
+                  title="Keyword filters"
+                  className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-500 shadow-sm transition-colors hover:border-slate-300 hover:text-slate-700"
+                >
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                      d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                   </svg>
-                  Scan Now
-                </>
-              )}
-            </button>
+                </button>
+
+                <button
+                  onClick={() => setShowHidden(h => !h)}
+                  className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
+                    showHidden
+                      ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
+                      : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-700'
+                  }`}
+                >
+                  {showHidden ? <EyeIcon /> : <EyeSlashIcon />}
+                  {showHidden ? `Showing hidden (${hidden.length})` : `Hidden (${hidden.length})`}
+                </button>
+
+                <button
+                  onClick={startScan}
+                  disabled={scanPending}
+                  className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {scanPending ? (
+                    <>
+                      <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      {scanning ? 'Starting…' : 'Scan queued…'}
+                    </>
+                  ) : (
+                    <>
+                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                      Scan Now
+                    </>
+                  )}
+                </button>
+
+                {auth.enabled && (
+                  <a href="/api/auth/logout" className="text-xs font-medium text-slate-500 hover:text-slate-800">
+                    Sign out{auth.username ? ` (${auth.username})` : ''}
+                  </a>
+                )}
+              </>
+            ) : authLoaded && auth.enabled ? (
+              <a
+                href="/api/auth/login"
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 shadow-sm transition-colors hover:border-indigo-300 hover:text-indigo-700"
+              >
+                Admin login
+              </a>
+            ) : null}
           </div>
         </div>
       </header>
@@ -636,7 +690,7 @@ export default function App() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50/60">
-                  {['Company', 'Title', 'Department', 'Location', 'Posted', 'Date Found', ''].map((col, i) => (
+                  {['Company', 'Title', 'Department', 'Location', 'Posted', 'Date Found', ...(auth.can_manage ? [''] : [])].map((col, i) => (
                     <th key={i}
                       className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-400">
                       {col}
@@ -647,11 +701,11 @@ export default function App() {
 
               <tbody>
                 {loading ? (
-                  Array.from({ length: 10 }).map((_, i) => <SkeletonRow key={i} />)
+                  Array.from({ length: 10 }).map((_, i) => <SkeletonRow key={i} canManage={auth.can_manage} />)
                 ) : error ? (
-                  <ErrorState message={error} />
+                  <ErrorState message={error} columnCount={tableColumns} />
                 ) : (showHidden ? hidden : visible).length === 0 ? (
-                  <EmptyState />
+                  <EmptyState canManage={auth.can_manage} columnCount={tableColumns} />
                 ) : (
                   (showHidden ? hidden : visible).map((job, idx) => (
                     <tr
@@ -701,20 +755,21 @@ export default function App() {
                         {shortDate(job.date_found)}
                       </td>
 
-                      {/* Hide / Unhide */}
-                      <td className="whitespace-nowrap px-4 py-3.5">
-                        <button
-                          onClick={() => toggleHidden(job)}
-                          title={job.hidden ? 'Unhide this job' : 'Hide this job'}
-                          className={`rounded-md p-1.5 transition-colors ${
-                            job.hidden
-                              ? 'text-indigo-400 hover:bg-indigo-50 hover:text-indigo-600'
-                              : 'text-slate-300 opacity-0 group-hover:opacity-100 hover:bg-slate-100 hover:text-slate-600'
-                          }`}
-                        >
-                          {job.hidden ? <EyeIcon /> : <EyeSlashIcon />}
-                        </button>
-                      </td>
+                      {auth.can_manage && (
+                        <td className="whitespace-nowrap px-4 py-3.5">
+                          <button
+                            onClick={() => toggleHidden(job)}
+                            title={job.hidden ? 'Unhide this job' : 'Hide this job'}
+                            className={`rounded-md p-1.5 transition-colors ${
+                              job.hidden
+                                ? 'text-indigo-400 hover:bg-indigo-50 hover:text-indigo-600'
+                                : 'text-slate-300 opacity-0 group-hover:opacity-100 hover:bg-slate-100 hover:text-slate-600'
+                            }`}
+                          >
+                            {job.hidden ? <EyeIcon /> : <EyeSlashIcon />}
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   ))
                 )}

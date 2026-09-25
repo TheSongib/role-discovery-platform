@@ -4,8 +4,28 @@ output "instance_id" {
 }
 
 output "public_ip" {
-  description = "Current auto-assigned public IPv4 address. It changes after stop/start; port 80 is closed unless allowed_http_cidrs is set."
-  value       = aws_instance.node.public_ip
+  description = "Stable Elastic IP for the guarded HTTP origin. Use application_url for normal access."
+  value       = aws_eip.node.public_ip
+}
+
+output "application_url" {
+  description = "Public HTTPS URL served by API Gateway. Anonymous visitors have read-only access."
+  value       = aws_apigatewayv2_api.app.api_endpoint
+}
+
+output "cognito_user_pool_id" {
+  description = "Cognito user pool used for administrator login."
+  value       = aws_cognito_user_pool.admin.id
+}
+
+output "cognito_admin_group" {
+  description = "Cognito group whose members can run scans and change application state."
+  value       = aws_cognito_user_group.admins.name
+}
+
+output "cognito_login_domain" {
+  description = "Cognito managed-login domain."
+  value       = "https://${aws_cognito_user_pool_domain.login.domain}.auth.${var.aws_region}.amazoncognito.com"
 }
 
 output "deployment_bucket" {
