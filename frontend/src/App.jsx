@@ -1,32 +1,70 @@
 import { useState, useEffect } from 'react'
 
 // ── Company badge colours ────────────────────────────────────────────────────
-const COMPANY_STYLES = {
-  Affirm:      'bg-emerald-400/10 text-emerald-300 ring-emerald-400/20',
-  Coinbase:    'bg-blue-400/10 text-blue-300 ring-blue-400/20',
-  Microsoft:   'bg-sky-400/10 text-sky-300 ring-sky-400/20',
-  Netflix:     'bg-red-400/10 text-red-300 ring-red-400/20',
-  Dropbox:     'bg-violet-400/10 text-violet-300 ring-violet-400/20',
-  Reddit:      'bg-orange-400/10 text-orange-300 ring-orange-400/20',
-  Airbnb:      'bg-rose-400/10 text-rose-300 ring-rose-400/20',
-  Stripe:      'bg-purple-400/10 text-purple-300 ring-purple-400/20',
-  GitLab:      'bg-amber-400/10 text-amber-300 ring-amber-400/20',
-  CrowdStrike: 'bg-red-400/10 text-red-300 ring-red-400/20',
-  GitHub:      'bg-slate-400/10 text-slate-300 ring-slate-400/20',
-  Mozilla:     'bg-orange-400/10 text-orange-300 ring-orange-400/20',
-  Circle:      'bg-teal-400/10 text-teal-300 ring-teal-400/20',
-  NerdWallet:  'bg-green-400/10 text-green-300 ring-green-400/20',
-  Confluent:   'bg-cyan-400/10 text-cyan-300 ring-cyan-400/20',
-  Zillow:      'bg-blue-400/10 text-blue-300 ring-blue-400/20',
-  Instacart:   'bg-orange-400/10 text-orange-300 ring-orange-400/20',
-  Quora:       'bg-red-400/10 text-red-300 ring-red-400/20',
-  Twilio:      'bg-rose-400/10 text-rose-300 ring-rose-400/20',
-  Zoom:        'bg-sky-400/10 text-sky-300 ring-sky-400/20',
-  Zscaler:     'bg-indigo-400/10 text-indigo-300 ring-indigo-400/20',
+// Brand hues stay in one map so every configured company gets a recognizable
+// badge while the shared CSS controls contrast and the neon treatment.
+const COMPANY_COLORS = {
+  Affirm:              '#4A4AF4',
+  Coinbase:            '#0052FF',
+  Microsoft:           '#00A4EF',
+  Netflix:             '#E50914',
+  Dropbox:             '#0061FF',
+  Reddit:              '#FF4500',
+  Airbnb:              '#FF5A5F',
+  Stripe:              '#635BFF',
+  GitLab:              '#FC6D26',
+  CrowdStrike:         '#E01E2D',
+  GitHub:              '#F0F6FC',
+  Mozilla:             '#FF7139',
+  Circle:              '#2775CA',
+  NerdWallet:          '#8CC63F',
+  Confluent:           '#00AFBA',
+  Zillow:              '#006AFF',
+  Instacart:           '#43B02A',
+  Quora:               '#B92B27',
+  Twilio:              '#F22F46',
+  Zoom:                '#2D8CFF',
+  Zscaler:             '#0096D6',
+  Oura:                '#D6B46C',
+  Wiz:                 '#8B5CF6',
+  Rubrik:              '#F26322',
+  Databricks:          '#FF3621',
+  Elastic:             '#00BFB3',
+  SailPoint:           '#00B2A9',
+  Snowflake:           '#29B5E8',
+  Plaid:               '#F5F7FA',
+  Brex:                '#FF5A1F',
+  Figma:               '#A259FF',
+  HubSpot:             '#FF7A59',
+  'Abnormal Security': '#8B5CF6',
+  'Grafana Labs':      '#F46800',
+  Tenable:             '#00B3B8',
+  '1Password':         '#0572EC',
+  Vanta:               '#8B5CF6',
+  Drata:               '#7C5CFC',
+  Pinterest:           '#E60023',
+  DoorDash:            '#FF3008',
+  OpenAI:              '#10A37F',
+  Tailscale:           '#F4F4F5',
+  MongoDB:             '#00ED64',
+  Chime:               '#00D64F',
+  Discord:             '#5865F2',
+  Samsara:             '#FF5C35',
+  Temporal:            '#8B5CF6',
+  Mercury:             '#8C6FF7',
+  Vercel:              '#FFFFFF',
+  ClickHouse:          '#FFCC01',
+  LaunchDarkly:        '#405BFF',
+  OpenRouter:          '#7C83FF',
+  Render:              '#46E3B7',
+  WorkOS:              '#6366F1',
+  'Modern Treasury':   '#2D6CDF',
+  Omni:                '#8B5CF6',
+  Centralize:          '#22D3EE',
 }
 
-function companyStyle(company) {
-  return COMPANY_STYLES[company] ?? 'bg-slate-400/10 text-slate-300 ring-slate-400/20'
+function companyColor(company) {
+  return COMPANY_COLORS[company] ?? '#94A3B8'
 }
 
 // ── Date helpers ─────────────────────────────────────────────────────────────
@@ -84,7 +122,10 @@ function StatCard({ label, value }) {
 
 function CompanyBadge({ company }) {
   return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide ring-1 ring-inset ${companyStyle(company)}`}>
+    <span
+      className="company-badge inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide"
+      style={{ '--company-color': companyColor(company) }}
+    >
       {company}
     </span>
   )
