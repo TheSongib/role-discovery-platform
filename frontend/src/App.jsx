@@ -1,72 +1,5 @@
 import { useState, useEffect } from 'react'
 
-// ── Company badge colours ────────────────────────────────────────────────────
-// Brand hues stay in one map so every configured company gets a recognizable
-// badge while the shared CSS controls contrast and the neon treatment.
-const COMPANY_COLORS = {
-  Affirm:              '#4A4AF4',
-  Coinbase:            '#0052FF',
-  Microsoft:           '#00A4EF',
-  Netflix:             '#E50914',
-  Dropbox:             '#0061FF',
-  Reddit:              '#FF4500',
-  Airbnb:              '#FF5A5F',
-  Stripe:              '#635BFF',
-  GitLab:              '#FC6D26',
-  CrowdStrike:         '#E01E2D',
-  GitHub:              '#F0F6FC',
-  Mozilla:             '#FF7139',
-  Circle:              '#2775CA',
-  NerdWallet:          '#8CC63F',
-  Confluent:           '#00AFBA',
-  Zillow:              '#006AFF',
-  Instacart:           '#43B02A',
-  Quora:               '#B92B27',
-  Twilio:              '#F22F46',
-  Zoom:                '#2D8CFF',
-  Zscaler:             '#0096D6',
-  Oura:                '#D6B46C',
-  Wiz:                 '#8B5CF6',
-  Rubrik:              '#F26322',
-  Databricks:          '#FF3621',
-  Elastic:             '#00BFB3',
-  SailPoint:           '#00B2A9',
-  Snowflake:           '#29B5E8',
-  Plaid:               '#F5F7FA',
-  Brex:                '#FF5A1F',
-  Figma:               '#A259FF',
-  HubSpot:             '#FF7A59',
-  'Abnormal Security': '#8B5CF6',
-  'Grafana Labs':      '#F46800',
-  Tenable:             '#00B3B8',
-  '1Password':         '#0572EC',
-  Vanta:               '#8B5CF6',
-  Drata:               '#7C5CFC',
-  Pinterest:           '#E60023',
-  DoorDash:            '#FF3008',
-  OpenAI:              '#10A37F',
-  Tailscale:           '#F4F4F5',
-  MongoDB:             '#00ED64',
-  Chime:               '#00D64F',
-  Discord:             '#5865F2',
-  Samsara:             '#FF5C35',
-  Temporal:            '#8B5CF6',
-  Mercury:             '#8C6FF7',
-  Vercel:              '#FFFFFF',
-  ClickHouse:          '#FFCC01',
-  LaunchDarkly:        '#405BFF',
-  OpenRouter:          '#7C83FF',
-  Render:              '#46E3B7',
-  WorkOS:              '#6366F1',
-  'Modern Treasury':   '#2D6CDF',
-  Omni:                '#8B5CF6',
-  Centralize:          '#22D3EE',
-}
-
-function companyColor(company) {
-  return COMPANY_COLORS[company] ?? '#94A3B8'
-}
-
 // ── Date helpers ─────────────────────────────────────────────────────────────
 function relativeDate(dateStr) {
   if (!dateStr) return null
@@ -120,11 +53,11 @@ function StatCard({ label, value }) {
   )
 }
 
-function CompanyBadge({ company }) {
+function CompanyBadge({ company, color }) {
   return (
     <span
       className="company-badge inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide"
-      style={{ '--company-color': companyColor(company) }}
+      style={{ '--company-color': color ?? '#94A3B8' }}
     >
       {company}
     </span>
@@ -765,7 +698,7 @@ export default function App() {
                     >
                       {/* Company */}
                       <td className="whitespace-nowrap px-5 py-3.5">
-                        <CompanyBadge company={job.company} />
+                        <CompanyBadge company={job.company} color={job.company_color} />
                       </td>
 
                       {/* Title */}
