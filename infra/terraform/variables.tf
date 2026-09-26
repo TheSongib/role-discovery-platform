@@ -62,9 +62,9 @@ variable "enable_public_gateway_origin" {
 }
 
 variable "github_oidc_subject" {
-  description = "Exact GitHub OIDC sub claim allowed to deploy. The default uses this repository's immutable owner and repository IDs."
+  description = "GitHub OIDC sub pattern allowed to deploy. The default trusts branch refs from this repository's immutable owner and repository IDs."
   type        = string
-  default     = "repo:TheSongib@61258600/role-discovery-platform@1366373286:ref:refs/heads/main"
+  default     = "repo:TheSongib@61258600/role-discovery-platform@1366373286:ref:refs/heads/*"
 }
 
 variable "github_oidc_provider_arn" {

@@ -33,6 +33,14 @@ class AuthenticationBoundaryTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         query_jobs.assert_called_once_with(show_hidden=False, max_age_days=7)
 
+    def test_job_response_includes_company_brand_color(self):
+        job = {"id": "job-1", "company": "Coinbase", "title": "Engineer"}
+        with patch("api.query_jobs", return_value=[job]):
+            response = self.client.get("/api/jobs")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()[0]["company_color"], "#0052FF")
+
     def test_every_state_changing_route_requires_admin_login(self):
         origin = "https://example.execute-api.us-east-1.amazonaws.com"
         requests = (

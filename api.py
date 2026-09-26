@@ -140,10 +140,22 @@ def list_jobs(
 ):
     # Hidden jobs are private administrative state even though active jobs are
     # intentionally visible without an account.
-    return query_jobs(
+    jobs = query_jobs(
         show_hidden=show_hidden and admin is not None,
         max_age_days=max_age_days,
     )
+    company_colors = {
+        company["name"]: company["brand_color"]
+        for company in COMPANIES
+        if company.get("brand_color")
+    }
+    return [
+        {
+            **job,
+            "company_color": company_colors.get(job.get("company"), "#94A3B8"),
+        }
+        for job in jobs
+    ]
 
 
 def _notify(new_jobs: list[dict]):

@@ -1,3 +1,4 @@
+import re
 import unittest
 from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
@@ -44,6 +45,14 @@ class NewCompanyConfigTests(unittest.TestCase):
         names = [company["name"] for company in COMPANIES]
 
         self.assertEqual(len(names), len(set(names)))
+
+    def test_every_company_has_a_valid_brand_color(self):
+        for company in COMPANIES:
+            with self.subTest(company=company["name"]):
+                self.assertRegex(
+                    company.get("brand_color", ""),
+                    r"^#[0-9A-F]{6}$",
+                )
 
     def test_github_uses_current_remote_and_us_facets(self):
         github = next(company for company in COMPANIES if company["name"] == "GitHub")

@@ -124,6 +124,9 @@ Review `terraform.tfvars` before the plan:
 - Set `github_oidc_provider_arn` if the account already has the singleton
   GitHub OIDC provider.
 - Update `github_oidc_subject` if the repository owner or repository changes.
+  Its default wildcard trusts branch refs only from this repository, allowing
+  manually selected branches to use the deployment role without trusting tags
+  or pull-request refs.
 
 Wait for bootstrap:
 
@@ -213,8 +216,12 @@ These are resource identifiers, not secrets. If `gh` is unavailable, create the
 same five repository variables under **Settings → Secrets and variables →
 Actions → Variables**.
 
-Pushes and pull requests run tests only. Start **Test and deploy to AWS k3s**
-manually on the `main` branch for the first and subsequent deployments. The
+Pull requests run tests only. Pushes to `main` run the tests and deploy
+automatically. To validate another branch in AWS before merging, start **Test
+and deploy to AWS k3s** manually, select that branch, and run the workflow. A
+manual branch deployment replaces the application in the same environment; it
+does not create an isolated preview environment. Re-run the workflow for
+`main` to restore the main-branch version if the branch is not merged. The
 workflow:
 
 1. exchanges GitHub's OIDC token for short-lived AWS credentials;

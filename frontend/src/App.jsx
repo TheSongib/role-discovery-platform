@@ -1,34 +1,5 @@
 import { useState, useEffect } from 'react'
 
-// ── Company badge colours ────────────────────────────────────────────────────
-const COMPANY_STYLES = {
-  Affirm:    'bg-emerald-50 text-emerald-700 ring-emerald-200',
-  Coinbase:  'bg-blue-50 text-blue-700 ring-blue-200',
-  Microsoft: 'bg-sky-50 text-sky-700 ring-sky-200',
-  Netflix:   'bg-red-50 text-red-700 ring-red-200',
-  Dropbox:   'bg-violet-50 text-violet-700 ring-violet-200',
-  Reddit:    'bg-orange-50 text-orange-700 ring-orange-200',
-  Airbnb:    'bg-rose-50 text-rose-700 ring-rose-200',
-  Stripe:    'bg-purple-50 text-purple-700 ring-purple-200',
-  GitLab:      'bg-amber-50 text-amber-700 ring-amber-200',
-  CrowdStrike: 'bg-red-50 text-red-700 ring-red-200',
-  GitHub:      'bg-gray-50 text-gray-700 ring-gray-200',
-  Mozilla:     'bg-orange-50 text-orange-700 ring-orange-200',
-  Circle:      'bg-teal-50 text-teal-700 ring-teal-200',
-  NerdWallet:  'bg-green-50 text-green-700 ring-green-200',
-  Confluent:   'bg-cyan-50 text-cyan-700 ring-cyan-200',
-  Zillow:      'bg-blue-50 text-blue-700 ring-blue-200',
-  Instacart:   'bg-orange-50 text-orange-700 ring-orange-200',
-  Quora:       'bg-red-50 text-red-700 ring-red-200',
-  Twilio:      'bg-rose-50 text-rose-700 ring-rose-200',
-  Zoom:        'bg-sky-50 text-sky-700 ring-sky-200',
-  Zscaler:     'bg-indigo-50 text-indigo-700 ring-indigo-200',
-}
-
-function companyStyle(company) {
-  return COMPANY_STYLES[company] ?? 'bg-slate-100 text-slate-700 ring-slate-200'
-}
-
 // ── Date helpers ─────────────────────────────────────────────────────────────
 function relativeDate(dateStr) {
   if (!dateStr) return null
@@ -74,16 +45,20 @@ function shortDate(isoStr) {
 // ── Small components ─────────────────────────────────────────────────────────
 function StatCard({ label, value }) {
   return (
-    <div className="bg-white rounded-xl px-5 py-4 shadow-sm ring-1 ring-slate-100">
-      <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">{label}</p>
-      <p className="mt-1 text-3xl font-bold text-slate-900">{value}</p>
+    <div className="surface-card group rounded-2xl px-5 py-4 transition-colors hover:border-white/15">
+      <div className="mb-3 h-0.5 w-8 rounded-full bg-gradient-to-r from-violet-400 to-cyan-400 opacity-70 transition-all group-hover:w-12" />
+      <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">{label}</p>
+      <p className="mt-1.5 text-3xl font-semibold tracking-tight text-slate-100">{value}</p>
     </div>
   )
 }
 
-function CompanyBadge({ company }) {
+function CompanyBadge({ company, color }) {
   return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset ${companyStyle(company)}`}>
+    <span
+      className="company-badge inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide"
+      style={{ '--company-color': color ?? '#94A3B8' }}
+    >
       {company}
     </span>
   )
@@ -91,10 +66,10 @@ function CompanyBadge({ company }) {
 
 function SkeletonRow({ canManage }) {
   return (
-    <tr className="animate-pulse border-b border-slate-50">
+    <tr className="animate-pulse border-b border-white/[0.05]">
       {[72, 220, 110, 150, 70, 90, ...(canManage ? [32] : [])].map((w, i) => (
         <td key={i} className="px-5 py-4">
-          <div className="h-3.5 rounded bg-slate-100" style={{ width: w }} />
+          <div className="h-3.5 rounded bg-slate-800" style={{ width: w }} />
         </td>
       ))}
     </tr>
@@ -105,16 +80,16 @@ function EmptyState({ canManage, columnCount }) {
   return (
     <tr>
       <td colSpan={columnCount} className="px-6 py-24 text-center">
-        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-slate-100">
-          <svg className="h-7 w-7 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04]">
+          <svg className="h-7 w-7 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
               d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
           </svg>
         </div>
-        <p className="text-base font-semibold text-slate-700">No listings yet</p>
-        <p className="mt-1 text-sm text-slate-400">
+        <p className="text-base font-semibold text-slate-200">No listings yet</p>
+        <p className="mt-1 text-sm text-slate-500">
           {canManage
-            ? <>Run <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-slate-600">Scan Now</code> to pull jobs</>
+            ? <>Run <code className="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-xs text-slate-300">Scan Now</code> to pull jobs</>
             : 'Scheduled scans will populate this dashboard.'}
         </p>
       </td>
@@ -126,15 +101,15 @@ function ErrorState({ message, columnCount }) {
   return (
     <tr>
       <td colSpan={columnCount} className="px-6 py-24 text-center">
-        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-red-50">
-          <svg className="h-7 w-7 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-red-400/15 bg-red-400/10">
+          <svg className="h-7 w-7 text-red-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
               d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
           </svg>
         </div>
-        <p className="text-base font-semibold text-slate-700">Could not load jobs</p>
-        <p className="mt-1 text-sm text-slate-400">{message} — is the API running?</p>
-        <p className="mt-2 font-mono text-xs text-slate-400">uvicorn api:app --reload</p>
+        <p className="text-base font-semibold text-slate-200">Could not load jobs</p>
+        <p className="mt-1 text-sm text-slate-500">{message} — is the API running?</p>
+        <p className="mt-2 font-mono text-xs text-slate-600">uvicorn api:app --reload</p>
       </td>
     </tr>
   )
@@ -146,11 +121,11 @@ function TagList({ items, onRemove, input, setInput, onAdd, placeholder }) {
     <div className="space-y-2">
       <div className="flex flex-wrap gap-1.5 min-h-[2.5rem]">
         {items.map((kw, i) => (
-          <span key={i} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
+          <span key={i} className="inline-flex items-center gap-1 rounded-full bg-violet-400/10 px-2.5 py-1 text-xs font-medium text-violet-200 ring-1 ring-inset ring-violet-400/20">
             {kw}
             <button
               onClick={() => onRemove(i)}
-              className="ml-0.5 rounded-full text-slate-400 hover:text-slate-700 transition-colors"
+              className="ml-0.5 rounded-full text-violet-300/60 transition-colors hover:text-violet-100"
               aria-label={`Remove ${kw}`}
             >
               <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -167,11 +142,11 @@ function TagList({ items, onRemove, input, setInput, onAdd, placeholder }) {
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && onAdd()}
           placeholder={placeholder}
-          className="flex-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-700 placeholder-slate-400 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+          className="flex-1 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-xs text-slate-200 outline-none placeholder:text-slate-600 focus:border-violet-400/50 focus:ring-2 focus:ring-violet-500/15"
         />
         <button
           onClick={onAdd}
-          className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:border-slate-300 hover:text-slate-800 transition-colors"
+          className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-medium text-slate-300 transition-colors hover:border-white/20 hover:bg-white/[0.07] hover:text-white"
         >
           Add
         </button>
@@ -231,17 +206,18 @@ function KeywordsModal({ onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-[#03050a]/80 backdrop-blur-md" onClick={onClose} />
 
       {/* Modal */}
-      <div className="relative w-full max-w-lg rounded-2xl bg-white shadow-xl ring-1 ring-slate-200 mx-4">
+      <div className="relative mx-4 w-full max-w-lg overflow-hidden rounded-3xl border border-white/10 bg-[#0d111d]/95 shadow-2xl shadow-black/60 ring-1 ring-black/30">
+        <div className="h-px bg-gradient-to-r from-transparent via-violet-400/60 to-transparent" />
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+        <div className="flex items-center justify-between border-b border-white/[0.07] px-6 py-5">
           <div>
-            <h2 className="text-sm font-semibold text-slate-900">Keyword Filters</h2>
-            <p className="mt-0.5 text-xs text-slate-500">Changes take effect on the next scan</p>
+            <h2 className="text-sm font-semibold tracking-wide text-slate-100">Keyword Filters</h2>
+            <p className="mt-1 text-xs text-slate-500">Changes take effect on the next scan</p>
           </div>
-          <button onClick={onClose} className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors">
+          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-500 transition-colors hover:bg-white/[0.06] hover:text-slate-200">
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -251,7 +227,7 @@ function KeywordsModal({ onClose }) {
         {/* Body */}
         <div className="space-y-5 px-6 py-5">
           <div>
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Include — title must contain at least one</p>
+            <p className="mb-2.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Include — title must contain at least one</p>
             <TagList
               items={includeKws}
               onRemove={i => removeKeyword(setIncludeKws, i)}
@@ -262,8 +238,8 @@ function KeywordsModal({ onClose }) {
             />
           </div>
 
-          <div className="border-t border-slate-100 pt-4">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Exclude — title must not contain any</p>
+          <div className="border-t border-white/[0.07] pt-4">
+            <p className="mb-2.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Exclude — title must not contain any</p>
             <TagList
               items={excludeKws}
               onRemove={i => removeKeyword(setExcludeKws, i)}
@@ -276,23 +252,23 @@ function KeywordsModal({ onClose }) {
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between border-t border-slate-100 px-6 py-4">
+        <div className="flex items-center justify-between border-t border-white/[0.07] bg-black/10 px-6 py-4">
           <div className="h-5">
             {saveResult === 'ok' && (
-              <span className="text-xs font-medium text-emerald-600">Saved successfully</span>
+              <span className="text-xs font-medium text-emerald-300">Saved successfully</span>
             )}
             {saveResult === 'error' && (
-              <span className="text-xs font-medium text-red-500">Save failed — try again</span>
+              <span className="text-xs font-medium text-red-300">Save failed — try again</span>
             )}
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:border-slate-300 transition-colors">
+            <button onClick={onClose} className="rounded-xl border border-white/10 px-3 py-2 text-xs font-medium text-slate-400 transition-colors hover:border-white/20 hover:text-slate-200">
               Close
             </button>
             <button
               onClick={handleSave}
               disabled={saving}
-              className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+              className="rounded-xl bg-gradient-to-r from-violet-500 to-indigo-500 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-violet-950/30 transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {saving ? 'Saving…' : 'Save'}
             </button>
@@ -329,8 +305,9 @@ function ScanStatusPanel({ scan }) {
 
   if (!scan) {
     return (
-      <div className="rounded-xl border border-slate-200 bg-white px-5 py-4 text-sm text-slate-500 shadow-sm">
-        No scans have been recorded yet.
+      <div className="surface-card flex items-center gap-3 rounded-2xl px-5 py-4 text-sm text-slate-500">
+        <span className="h-2 w-2 rounded-full bg-slate-600" />
+        No scans have been recorded yet
       </div>
     )
   }
@@ -339,11 +316,11 @@ function ScanStatusPanel({ scan }) {
   const completed = (scan.companies ?? []).length
   const isRunning = scan.status === 'running'
   const statusStyle = {
-    success: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
-    partial: 'bg-amber-50 text-amber-700 ring-amber-200',
-    failed: 'bg-red-50 text-red-700 ring-red-200',
-    running: 'bg-blue-50 text-blue-700 ring-blue-200',
-  }[scan.status] ?? 'bg-slate-100 text-slate-700 ring-slate-200'
+    success: 'bg-emerald-400/10 text-emerald-300 ring-emerald-400/20',
+    partial: 'bg-amber-400/10 text-amber-300 ring-amber-400/20',
+    failed: 'bg-red-400/10 text-red-300 ring-red-400/20',
+    running: 'bg-cyan-400/10 text-cyan-300 ring-cyan-400/20',
+  }[scan.status] ?? 'bg-slate-400/10 text-slate-300 ring-slate-400/20'
 
   const summary = isRunning
     ? `${completed} of ${scan.total_companies} companies completed`
@@ -352,56 +329,57 @@ function ScanStatusPanel({ scan }) {
       : `${scan.successful_companies} of ${scan.total_companies} companies returned successfully`
 
   return (
-    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+    <div className="surface-card overflow-hidden rounded-2xl">
       <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
         <div className="flex min-w-0 items-center gap-3">
-          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold capitalize ring-1 ring-inset ${statusStyle}`}>
+          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] ring-1 ring-inset ${statusStyle}`}>
+            <span className={`h-1.5 w-1.5 rounded-full ${isRunning ? 'animate-pulse bg-cyan-300' : 'bg-current'}`} />
             {scan.status}
           </span>
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-slate-800">{summary}</p>
-            <p className="mt-0.5 text-xs text-slate-400">
+            <p className="text-sm font-semibold text-slate-200">{summary}</p>
+            <p className="mt-0.5 text-xs text-slate-500">
               {scan.trigger} scan · {relativeDate(scan.finished_at ?? scan.started_at)}
             </p>
-            <p className="mt-1 text-xs text-slate-500">
+            <p className="mt-1 text-xs text-slate-400">
               {scan.total_found} jobs found · {scan.keyword_filtered} removed by keywords · {scan.not_remote} not remote · {scan.total_seen} matching
             </p>
           </div>
         </div>
         <button
           onClick={() => setExpanded(value => !value)}
-          className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-800"
+          className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs font-medium text-slate-400 transition-colors hover:border-white/20 hover:bg-white/[0.06] hover:text-slate-200"
         >
           {expanded ? 'Hide details' : 'View details'}
         </button>
       </div>
 
       {failed.length > 0 && !expanded && (
-        <div className="border-t border-amber-100 bg-amber-50/60 px-5 py-3 text-xs text-amber-800">
+        <div className="border-t border-amber-400/10 bg-amber-400/[0.06] px-5 py-3 text-xs text-amber-300">
           Failed: {failed.map(company => company.company).join(', ')}
         </div>
       )}
 
       {expanded && (
-        <div className="max-h-80 overflow-y-auto border-t border-slate-100">
+        <div className="max-h-80 overflow-y-auto border-t border-white/[0.07] bg-black/10">
           {(scan.companies ?? []).map(company => (
-            <div key={company.company} className="flex items-start justify-between gap-4 border-b border-slate-50 px-5 py-3 last:border-0">
+            <div key={company.company} className="flex items-start justify-between gap-4 border-b border-white/[0.05] px-5 py-3 last:border-0 hover:bg-white/[0.02]">
               <div className="min-w-0">
-                <p className="text-sm font-medium text-slate-700">
+                <p className="text-sm font-medium text-slate-300">
                   {company.company}
-                  <span className="ml-2 text-xs font-normal text-slate-400">{company.ats}</span>
+                  <span className="ml-2 text-xs font-normal text-slate-600">{company.ats}</span>
                 </p>
                 {company.error && (
-                  <p className="mt-1 break-words text-xs text-red-600">{company.error}</p>
+                  <p className="mt-1 break-words text-xs text-red-300">{company.error}</p>
                 )}
               </div>
               <div className="flex shrink-0 items-center gap-3 text-xs">
                 {company.status === 'success' && (
-                  <span className="text-slate-400">
+                  <span className="text-slate-500">
                     {company.jobs_found} found · {company.keyword_filtered} removed by keywords · {company.not_remote} not remote · {company.jobs_seen} matching
                   </span>
                 )}
-                <span className={company.status === 'success' ? 'font-medium text-emerald-600' : 'font-medium text-red-600'}>
+                <span className={company.status === 'success' ? 'font-medium text-emerald-300' : 'font-medium text-red-300'}>
                   {company.status}
                 </span>
               </div>
@@ -530,30 +508,30 @@ export default function App() {
   const scanPending = scanning || scanResult?.status === 'accepted'
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-900">
+    <div className="app-shell min-h-screen font-sans text-slate-100">
 
       {showSettings && auth.can_manage && <KeywordsModal onClose={() => setShowSettings(false)} />}
 
       {/* ── Header ── */}
-      <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/90 backdrop-blur-sm">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-3.5">
+      <header className="sticky top-0 z-10 border-b border-white/[0.07] bg-[#080b14]/80 shadow-lg shadow-black/10 backdrop-blur-xl">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-6 py-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 shadow-sm">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-cyan-400 shadow-lg shadow-violet-950/40 ring-1 ring-white/20">
               <svg className="h-4.5 w-4.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                   d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
               </svg>
             </div>
             <div>
-              <h1 className="text-sm font-bold leading-none text-slate-900">JobTracker</h1>
-              <p className="mt-0.5 text-xs text-slate-400">Remote US · Engineering &amp; Security</p>
+              <h1 className="text-sm font-semibold leading-none tracking-wide text-white">JobTracker</h1>
+              <p className="mt-1 text-[11px] tracking-wide text-slate-500">Remote US · Engineering &amp; Security</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center justify-end gap-2.5">
             {!loading && !error && (
-              <span className="text-sm text-slate-500">
-                <span className="font-semibold text-slate-800">{visible.length}</span> listings
+              <span className="mr-1 text-xs text-slate-500">
+                <span className="font-semibold text-slate-200">{visible.length}</span> listings
               </span>
             )}
 
@@ -561,7 +539,8 @@ export default function App() {
             <select
               value={maxAge}
               onChange={e => setMaxAge(Number(e.target.value))}
-              className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition-colors hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
+              aria-label="Job age"
+              className="control-dark rounded-xl px-3 py-2 text-xs font-medium text-slate-300 outline-none focus:border-violet-400/50 focus:ring-2 focus:ring-violet-500/15"
             >
               {AGE_OPTIONS.map(opt => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -570,14 +549,14 @@ export default function App() {
 
             {/* Scan result flash */}
             {scanResult && !scanPending && (
-              <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
+              <span className={`rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset ${
                 scanResult.error || scanResult.status === 'failed'
-                  ? 'bg-red-50 text-red-600'
+                  ? 'bg-red-400/10 text-red-300 ring-red-400/20'
                   : scanResult.status === 'partial' || scanResult.status === 'already_running'
-                    ? 'bg-amber-50 text-amber-700'
+                    ? 'bg-amber-400/10 text-amber-300 ring-amber-400/20'
                   : scanResult.new_jobs > 0
-                    ? 'bg-emerald-50 text-emerald-700'
-                    : 'bg-slate-100 text-slate-500'
+                    ? 'bg-emerald-400/10 text-emerald-300 ring-emerald-400/20'
+                    : 'bg-slate-400/10 text-slate-400 ring-slate-400/20'
               }`}>
                 {scanResult.error || scanResult.status === 'failed'
                   ? (typeof scanResult.error === 'string' ? scanResult.error : 'Scan failed')
@@ -596,7 +575,7 @@ export default function App() {
                 <button
                   onClick={() => setShowSettings(s => !s)}
                   title="Keyword filters"
-                  className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-500 shadow-sm transition-colors hover:border-slate-300 hover:text-slate-700"
+                  className="control-dark rounded-xl p-2 text-slate-400 transition-colors hover:border-white/20 hover:bg-white/[0.07] hover:text-slate-100"
                 >
                   <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
@@ -607,10 +586,10 @@ export default function App() {
 
                 <button
                   onClick={() => setShowHidden(h => !h)}
-                  className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
+                  className={`flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-medium transition-colors ${
                     showHidden
-                      ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
-                      : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-700'
+                      ? 'border-violet-400/30 bg-violet-400/10 text-violet-200'
+                      : 'border-white/10 bg-white/[0.035] text-slate-400 hover:border-white/20 hover:bg-white/[0.06] hover:text-slate-200'
                   }`}
                 >
                   {showHidden ? <EyeIcon /> : <EyeSlashIcon />}
@@ -620,7 +599,7 @@ export default function App() {
                 <button
                   onClick={startScan}
                   disabled={scanPending}
-                  className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-500 px-3.5 py-2 text-xs font-semibold text-white shadow-lg shadow-violet-950/30 transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {scanPending ? (
                     <>
@@ -642,7 +621,7 @@ export default function App() {
                 </button>
 
                 {auth.enabled && (
-                  <a href="/api/auth/logout" className="text-xs font-medium text-slate-500 hover:text-slate-800">
+                  <a href="/api/auth/logout" className="ml-1 text-xs font-medium text-slate-500 transition-colors hover:text-slate-200">
                     Sign out{auth.username ? ` (${auth.username})` : ''}
                   </a>
                 )}
@@ -650,7 +629,7 @@ export default function App() {
             ) : authLoaded && auth.enabled ? (
               <a
                 href="/api/auth/login"
-                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 shadow-sm transition-colors hover:border-indigo-300 hover:text-indigo-700"
+                className="control-dark rounded-xl px-3.5 py-2 text-xs font-semibold text-slate-300 transition-colors hover:border-violet-400/40 hover:bg-violet-400/10 hover:text-violet-200"
               >
                 Admin login
               </a>
@@ -659,7 +638,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+      <main className="relative mx-auto max-w-7xl space-y-6 px-6 py-8 sm:py-10">
 
         <ScanStatusPanel scan={latestScan} />
 
@@ -674,13 +653,16 @@ export default function App() {
         )}
 
         {/* ── Table card ── */}
-        <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-100">
-          <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
-            <h2 className="text-sm font-semibold text-slate-700">
-              {showHidden ? 'Hidden Listings' : 'Active Listings'}
-            </h2>
+        <div className="surface-card overflow-hidden rounded-2xl">
+          <div className="flex items-center justify-between border-b border-white/[0.07] px-6 py-4">
+            <div>
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-violet-300/70">Opportunity feed</p>
+              <h2 className="text-sm font-semibold text-slate-200">
+                {showHidden ? 'Hidden Listings' : 'Active Listings'}
+              </h2>
+            </div>
             {!loading && !error && jobs.length > 0 && (
-              <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600">
+              <span className="rounded-full bg-white/[0.05] px-2.5 py-1 text-xs font-medium text-slate-400 ring-1 ring-inset ring-white/[0.08]">
                 {showHidden ? hidden.length : visible.length} roles
               </span>
             )}
@@ -689,10 +671,10 @@ export default function App() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-slate-100 bg-slate-50/60">
+                <tr className="border-b border-white/[0.07] bg-white/[0.025]">
                   {['Company', 'Title', 'Department', 'Location', 'Posted', 'Date Found', ...(auth.can_manage ? [''] : [])].map((col, i) => (
                     <th key={i}
-                      className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-400">
+                      className="px-5 py-3.5 text-left text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-600">
                       {col}
                     </th>
                   ))}
@@ -710,48 +692,48 @@ export default function App() {
                   (showHidden ? hidden : visible).map((job, idx) => (
                     <tr
                       key={job.id}
-                      className={`group border-b border-slate-50 transition-colors hover:bg-indigo-50/40 ${
-                        job.hidden ? 'opacity-60' : idx % 2 === 1 ? 'bg-slate-50/30' : ''
+                      className={`group border-b border-white/[0.045] transition-colors hover:bg-violet-400/[0.045] ${
+                        job.hidden ? 'opacity-50' : idx % 2 === 1 ? 'bg-white/[0.012]' : ''
                       }`}
                     >
                       {/* Company */}
                       <td className="whitespace-nowrap px-5 py-3.5">
-                        <CompanyBadge company={job.company} />
+                        <CompanyBadge company={job.company} color={job.company_color} />
                       </td>
 
                       {/* Title */}
                       <td className="px-5 py-3.5">
                         {job.url ? (
                           <a href={job.url} target="_blank" rel="noopener noreferrer"
-                            className="font-medium text-slate-800 underline-offset-2 hover:text-indigo-600 hover:underline">
+                            className="font-medium text-slate-200 decoration-violet-400/50 underline-offset-4 transition-colors hover:text-violet-300 hover:underline">
                             {job.title}
                           </a>
                         ) : (
-                          <span className="font-medium text-slate-800">{job.title}</span>
+                          <span className="font-medium text-slate-200">{job.title}</span>
                         )}
                       </td>
 
                       {/* Department */}
                       <td className="whitespace-nowrap px-5 py-3.5 text-slate-500">
-                        {job.department || <span className="text-slate-300">—</span>}
+                        {job.department || <span className="text-slate-700">—</span>}
                       </td>
 
                       {/* Location */}
                       <td className="px-5 py-3.5">
                         <span className="block max-w-[200px] truncate text-slate-500" title={job.location}>
-                          {job.location || <span className="text-slate-300">—</span>}
+                          {job.location || <span className="text-slate-700">—</span>}
                         </span>
                       </td>
 
                       {/* Posted */}
                       <td className="whitespace-nowrap px-5 py-3.5">
-                        <span className="font-medium text-slate-700">
+                        <span className="font-medium text-slate-300">
                           {relativeDate(job.date_posted ?? job.date_found)}
                         </span>
                       </td>
 
                       {/* Date Found */}
-                      <td className="whitespace-nowrap px-5 py-3.5 text-slate-400">
+                      <td className="whitespace-nowrap px-5 py-3.5 text-slate-600">
                         {shortDate(job.date_found)}
                       </td>
 
@@ -762,8 +744,8 @@ export default function App() {
                             title={job.hidden ? 'Unhide this job' : 'Hide this job'}
                             className={`rounded-md p-1.5 transition-colors ${
                               job.hidden
-                                ? 'text-indigo-400 hover:bg-indigo-50 hover:text-indigo-600'
-                                : 'text-slate-300 opacity-0 group-hover:opacity-100 hover:bg-slate-100 hover:text-slate-600'
+                                ? 'text-violet-300 hover:bg-violet-400/10 hover:text-violet-200'
+                                : 'text-slate-600 opacity-0 group-hover:opacity-100 hover:bg-white/[0.06] hover:text-slate-300'
                             }`}
                           >
                             {job.hidden ? <EyeIcon /> : <EyeSlashIcon />}
