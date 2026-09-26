@@ -15,6 +15,7 @@ locals {
   state_table_name    = "${var.project_name}-state"
   oidc_provider_arn   = var.github_oidc_provider_arn != "" ? var.github_oidc_provider_arn : one(aws_iam_openid_connect_provider.github[*].arn)
   github_oidc_subject = var.github_oidc_subject
+  application_url     = var.enable_custom_domain ? "https://${var.custom_domain_name}" : aws_apigatewayv2_api.app.api_endpoint
 }
 
 resource "aws_vpc" "main" {
@@ -338,7 +339,7 @@ resource "aws_instance" "node" {
       cognito_user_pool_id        = aws_cognito_user_pool.admin.id
       jobs_table_name             = aws_dynamodb_table.jobs.name
       origin_secret_parameter     = aws_ssm_parameter.origin_secret.name
-      public_base_url             = aws_apigatewayv2_api.app.api_endpoint
+      public_base_url             = local.application_url
       scan_history_retention_days = var.scan_history_retention_days
       state_table_name            = aws_dynamodb_table.state.name
     })

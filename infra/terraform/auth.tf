@@ -128,6 +128,50 @@ resource "aws_apigatewayv2_stage" "default" {
   depends_on = [aws_apigatewayv2_route.default]
 }
 
+# DNS stays with the domain provider. Terraform requests the certificate and
+# exposes the records that must be added there before enable_custom_domain is
+# turned on.
+resource "aws_acm_certificate" "app" {
+  count = var.custom_domain_name == "" ? 0 : 1
+
+  domain_name       = var.custom_domain_name
+  validation_method = "DNS"
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "aws_acm_certificate_validation" "app" {
+  count = var.enable_custom_domain ? 1 : 0
+
+  certificate_arn = aws_acm_certificate.app[0].arn
+  validation_record_fqdns = [
+    for option in aws_acm_certificate.app[0].domain_validation_options :
+    option.resource_record_name
+  ]
+}
+
+resource "aws_apigatewayv2_domain_name" "app" {
+  count = var.enable_custom_domain ? 1 : 0
+
+  domain_name = var.custom_domain_name
+
+  domain_name_configuration {
+    certificate_arn = aws_acm_certificate_validation.app[0].certificate_arn
+    endpoint_type   = "REGIONAL"
+    security_policy = "TLS_1_2"
+  }
+}
+
+resource "aws_apigatewayv2_api_mapping" "app" {
+  count = var.enable_custom_domain ? 1 : 0
+
+  api_id      = aws_apigatewayv2_api.app.id
+  domain_name = aws_apigatewayv2_domain_name.app[0].id
+  stage       = aws_apigatewayv2_stage.default.id
+}
+
 resource "aws_cognito_user_pool_client" "web" {
   name         = "${var.project_name}-web"
   user_pool_id = aws_cognito_user_pool.admin.id
@@ -137,13 +181,19 @@ resource "aws_cognito_user_pool_client" "web" {
   allowed_oauth_flows                  = ["code"]
   allowed_oauth_scopes                 = ["email", "openid"]
   supported_identity_providers         = ["COGNITO"]
-  callback_urls                        = ["${aws_apigatewayv2_api.app.api_endpoint}/api/auth/callback"]
-  logout_urls                          = ["${aws_apigatewayv2_api.app.api_endpoint}/"]
-  prevent_user_existence_errors        = "ENABLED"
-  enable_token_revocation              = true
-  access_token_validity                = 60
-  id_token_validity                    = 60
-  refresh_token_validity               = 1
+  callback_urls = concat(
+    ["${aws_apigatewayv2_api.app.api_endpoint}/api/auth/callback"],
+    var.enable_custom_domain ? ["https://${var.custom_domain_name}/api/auth/callback"] : [],
+  )
+  logout_urls = concat(
+    ["${aws_apigatewayv2_api.app.api_endpoint}/"],
+    var.enable_custom_domain ? ["https://${var.custom_domain_name}/"] : [],
+  )
+  prevent_user_existence_errors = "ENABLED"
+  enable_token_revocation       = true
+  access_token_validity         = 60
+  id_token_validity             = 60
+  refresh_token_validity        = 1
 
   token_validity_units {
     access_token  = "minutes"

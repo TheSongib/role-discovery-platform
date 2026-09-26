@@ -12,6 +12,12 @@ github_oidc_subject = "repo:TheSongib@61258600/role-discovery-platform@136637328
 allowed_http_cidrs = []
 enable_public_gateway_origin = false
 
+# External-DNS custom domains use two phases. Set the name first, apply, and
+# add the output validation CNAME at your DNS provider. Set the boolean to true
+# and apply again only after ACM reports the certificate as issued.
+custom_domain_name  = ""
+enable_custom_domain = false
+
 # This personal application scans continuously, so the node stays online.
 # Set a value of at least 60 only for an on-demand demo environment.
 auto_stop_after_minutes = 0
