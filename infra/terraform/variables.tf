@@ -61,6 +61,28 @@ variable "enable_public_gateway_origin" {
   default     = false
 }
 
+variable "custom_domain_name" {
+  description = "Optional public hostname for the application. DNS remains managed outside Terraform."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.custom_domain_name == "" || can(regex("^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$", var.custom_domain_name))
+    error_message = "custom_domain_name must be empty or a lowercase fully qualified domain name such as jobs.example.com."
+  }
+}
+
+variable "enable_custom_domain" {
+  description = "Create the API Gateway mapping after the external DNS validation record has issued the ACM certificate."
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = !var.enable_custom_domain || var.custom_domain_name != ""
+    error_message = "Set custom_domain_name before enabling the custom domain."
+  }
+}
+
 variable "github_oidc_subject" {
   description = "GitHub OIDC sub pattern allowed to deploy. The default trusts branch refs from this repository's immutable owner and repository IDs."
   type        = string

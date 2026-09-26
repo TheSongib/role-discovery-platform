@@ -54,6 +54,7 @@ jobs:
       DEPLOYMENT_BUCKET: ${{ vars.DEPLOYMENT_BUCKET }}
       EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
       ECR_REPOSITORY_URI: ${{ vars.ECR_REPOSITORY_URI }}
+      PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
     steps:
       - uses: actions/checkout@v6
 
@@ -64,6 +65,8 @@ jobs:
           test -n "$DEPLOYMENT_BUCKET"
           test -n "$EC2_INSTANCE_ID"
           test -n "$ECR_REPOSITORY_URI"
+          test -n "$PUBLIC_BASE_URL"
+          [[ "$PUBLIC_BASE_URL" == https://* ]]
 
       - name: Get short-lived AWS credentials
         uses: aws-actions/configure-aws-credentials@v5
@@ -97,6 +100,8 @@ jobs:
       - name: Upload Kubernetes deployment bundle
         id: bundle
         run: |
+          sed -i "s|PUBLIC_BASE_URL_PLACEHOLDER|$PUBLIC_BASE_URL|g" k8s/aws.yaml
+          grep -F "PUBLIC_BASE_URL: $PUBLIC_BASE_URL" k8s/aws.yaml
           tar -czf deployment.tar.gz k8s
           BUNDLE_URI="s3://$DEPLOYMENT_BUCKET/deployments/${GITHUB_SHA}.tar.gz"
           aws s3 cp deployment.tar.gz "$BUNDLE_URI" --region "$TARGET_AWS_REGION"

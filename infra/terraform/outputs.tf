@@ -10,7 +10,41 @@ output "public_ip" {
 
 output "application_url" {
   description = "Public HTTPS URL served by API Gateway. Anonymous visitors have read-only access."
+  value       = local.application_url
+}
+
+output "default_application_url" {
+  description = "AWS-provided API Gateway URL retained as a fallback after a custom domain is enabled."
   value       = aws_apigatewayv2_api.app.api_endpoint
+}
+
+output "custom_domain_validation_records" {
+  description = "DNS records to add at the external DNS provider before enabling the custom domain."
+  value = var.custom_domain_name == "" ? [] : [
+    for option in aws_acm_certificate.app[0].domain_validation_options : {
+      name = trimsuffix(option.resource_record_name, ".")
+      squarespace_name = trimsuffix(
+        trimsuffix(option.resource_record_name, "."),
+        ".${var.custom_domain_name}",
+      )
+      type  = option.resource_record_type
+      value = trimsuffix(option.resource_record_value, ".")
+    }
+  ]
+}
+
+output "custom_domain_certificate_arn" {
+  description = "ACM certificate to monitor while external DNS validation completes."
+  value       = var.custom_domain_name == "" ? null : aws_acm_certificate.app[0].arn
+}
+
+output "custom_domain_dns_record" {
+  description = "Squarespace ALIAS record to create after enable_custom_domain has been applied."
+  value = var.enable_custom_domain ? {
+    name  = "@"
+    type  = "ALIAS"
+    value = trimsuffix(aws_apigatewayv2_domain_name.app[0].domain_name_configuration[0].target_domain_name, ".")
+  } : null
 }
 
 output "cognito_user_pool_id" {

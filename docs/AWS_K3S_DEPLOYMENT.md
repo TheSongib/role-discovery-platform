@@ -210,10 +210,11 @@ gh variable set AWS_DEPLOY_ROLE_ARN --body "$(./tf output -raw github_deploy_rol
 gh variable set DEPLOYMENT_BUCKET --body "$(./tf output -raw deployment_bucket)"
 gh variable set EC2_INSTANCE_ID --body "$(./tf output -raw instance_id)"
 gh variable set ECR_REPOSITORY_URI --body "$(./tf output -raw ecr_repository_uri)"
+gh variable set PUBLIC_BASE_URL --body "$(./tf output -raw application_url)"
 ```
 
 These are resource identifiers, not secrets. If `gh` is unavailable, create the
-same five repository variables under **Settings → Secrets and variables →
+same six repository variables under **Settings → Secrets and variables →
 Actions → Variables**.
 
 Pull requests run tests only. Pushes to `main` run the tests and deploy
@@ -278,6 +279,69 @@ login** for management controls. The Elastic IP is an origin address, not the
 normal application URL, and direct requests to it receive `403` except for the
 minimal health endpoint.
 
+### Use `songib.net` with Squarespace DNS
+
+The custom domain is deliberately rolled out in two phases because Squarespace,
+not Terraform, controls the authoritative DNS zone. This avoids switching the
+application or Cognito to a hostname before its certificate and routing are
+ready.
+
+The local `terraform.tfvars` should initially contain:
+
+```hcl
+custom_domain_name   = "songib.net"
+enable_custom_domain = false
+```
+
+Apply once to request the free, non-exportable ACM certificate:
+
+```bash
+cd infra/terraform
+./tf plan -out=custom-domain-certificate.tfplan
+./tf apply custom-domain-certificate.tfplan
+./tf output -json custom_domain_validation_records
+```
+
+In Squarespace, open **Domains → songib.net → DNS → DNS Settings → Custom
+Records** and add each record from that output. Use its `squarespace_name` as
+the Name, `CNAME` as the Type, and `value` as the Data. Keep the existing apex
+record in place during certificate validation.
+
+Wait until ACM reports `ISSUED`:
+
+```bash
+CERTIFICATE_ARN=$(./tf output -raw custom_domain_certificate_arn)
+aws acm wait certificate-validated \
+  --region "$(./tf output -raw aws_region)" \
+  --certificate-arn "$CERTIFICATE_ARN"
+```
+
+Then set `enable_custom_domain = true`, plan, and apply again. This creates the
+API Gateway domain and mapping and permits both the AWS URL and `songib.net` as
+Cognito callback/logout URLs:
+
+```bash
+./tf plan -out=custom-domain-enable.tfplan
+./tf apply custom-domain-enable.tfplan
+./tf output -json custom_domain_dns_record
+```
+
+In Squarespace, disable DNSSEC if it is enabled, remove only the existing apex
+web-hosting A/AAAA/ALIAS records for `@`, and create the record shown by that
+last output: Type `ALIAS`, Name `@`, and Data equal to `value`. Do not remove
+MX or TXT records used for email or verification.
+
+After `https://songib.net` responds, update the GitHub Actions repository
+variable and deploy the application once so its OAuth and origin configuration
+uses the new URL:
+
+```bash
+gh variable set PUBLIC_BASE_URL --body "$(./tf output -raw application_url)"
+```
+
+The AWS-provided URL remains available as `default_application_url` for
+recovery and testing.
+
 An SSM tunnel remains available for maintenance:
 
 ```bash
@@ -341,9 +405,8 @@ run `terraform destroy`.
 - Swap is a deliberate cost optimization for this combined control-plane and
   workload node. Kubernetes generally recommends avoiding swap on production
   control-plane nodes.
-- API Gateway's default hostname is appropriate for a portfolio deployment.
-  Add Route 53, ACM, and an API Gateway custom domain later if a branded domain
-  becomes worthwhile.
+- The `songib.net` DNS zone remains outside Terraform in Squarespace, so its
+  ACM validation CNAME and API Gateway ALIAS must be maintained there.
 - ECR Public makes the application image readable by anyone; no credentials or
   runtime data are embedded in it.
 
