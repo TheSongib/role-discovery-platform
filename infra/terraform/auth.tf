@@ -68,8 +68,9 @@ resource "aws_cognito_user_group" "admins" {
 }
 
 resource "aws_cognito_user_pool_domain" "login" {
-  domain       = "${var.project_name}-${data.aws_caller_identity.current.account_id}"
-  user_pool_id = aws_cognito_user_pool.admin.id
+  domain                = "${var.project_name}-${data.aws_caller_identity.current.account_id}"
+  user_pool_id          = aws_cognito_user_pool.admin.id
+  managed_login_version = 2
 }
 
 resource "aws_apigatewayv2_api" "app" {
@@ -208,4 +209,13 @@ resource "aws_cognito_user_pool_client" "web" {
     id_token      = "minutes"
     refresh_token = "days"
   }
+}
+
+resource "aws_cognito_managed_login_branding" "app" {
+  client_id    = aws_cognito_user_pool_client.web.id
+  user_pool_id = aws_cognito_user_pool.admin.id
+
+  settings = jsonencode(jsondecode(file("${path.module}/templates/cognito-managed-login-settings.json")))
+
+  depends_on = [aws_cognito_user_pool_domain.login]
 }

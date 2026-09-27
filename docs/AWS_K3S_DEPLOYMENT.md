@@ -268,6 +268,12 @@ browser restarts. Explicit logout revokes the refresh token in Cognito and
 clears both cookies. After this session configuration is first deployed,
 existing sessions must sign in once to receive a refresh token.
 
+The Cognito domain uses Managed Login v2 with the same dark navy, slate,
+violet, and emerald palette as the application. Its reproducible branding
+settings are stored in
+`infra/terraform/templates/cognito-managed-login-settings.json`; update that
+file and apply Terraform to evolve the hosted login design.
+
 ## 6. Open the public site
 
 After the protected pod is healthy, set
