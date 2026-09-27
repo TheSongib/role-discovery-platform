@@ -68,8 +68,9 @@ resource "aws_cognito_user_group" "admins" {
 }
 
 resource "aws_cognito_user_pool_domain" "login" {
-  domain       = "${var.project_name}-${data.aws_caller_identity.current.account_id}"
-  user_pool_id = aws_cognito_user_pool.admin.id
+  domain                = "${var.project_name}-${data.aws_caller_identity.current.account_id}"
+  user_pool_id          = aws_cognito_user_pool.admin.id
+  managed_login_version = 2
 }
 
 resource "aws_apigatewayv2_api" "app" {
@@ -181,6 +182,9 @@ resource "aws_cognito_user_pool_client" "web" {
   allowed_oauth_flows                  = ["code"]
   allowed_oauth_scopes                 = ["email", "openid"]
   supported_identity_providers         = ["COGNITO"]
+  # Rotation is incompatible with Cognito's REFRESH_TOKEN_AUTH API flow. This
+  # app refreshes through the OAuth token endpoint instead.
+  explicit_auth_flows = ["ALLOW_USER_SRP_AUTH"]
   callback_urls = concat(
     ["${aws_apigatewayv2_api.app.api_endpoint}/api/auth/callback"],
     var.enable_custom_domain ? ["https://${var.custom_domain_name}/api/auth/callback"] : [],
@@ -193,11 +197,25 @@ resource "aws_cognito_user_pool_client" "web" {
   enable_token_revocation       = true
   access_token_validity         = 60
   id_token_validity             = 60
-  refresh_token_validity        = 1
+  refresh_token_validity        = 30
+
+  refresh_token_rotation {
+    feature                    = "ENABLED"
+    retry_grace_period_seconds = 60
+  }
 
   token_validity_units {
     access_token  = "minutes"
     id_token      = "minutes"
     refresh_token = "days"
   }
+}
+
+resource "aws_cognito_managed_login_branding" "app" {
+  client_id    = aws_cognito_user_pool_client.web.id
+  user_pool_id = aws_cognito_user_pool.admin.id
+
+  settings = jsonencode(jsondecode(file("${path.module}/templates/cognito-managed-login-settings.json")))
+
+  depends_on = [aws_cognito_user_pool_domain.login]
 }

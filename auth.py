@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 import os
 import secrets
 from datetime import datetime, timezone
@@ -18,7 +19,7 @@ from urllib.parse import urlencode
 
 import jwt
 import requests
-from fastapi import HTTPException, Request, status
+from fastapi import HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 from jwt import PyJWKClient
 
@@ -32,10 +33,20 @@ COGNITO_DOMAIN = os.getenv("COGNITO_DOMAIN", "").rstrip("/")
 COGNITO_ADMIN_GROUP = os.getenv("COGNITO_ADMIN_GROUP", "admins")
 
 SESSION_COOKIE = "jobtracker_admin_session"
+REFRESH_COOKIE = "jobtracker_admin_refresh"
 STATE_COOKIE = "jobtracker_oauth_state"
 VERIFIER_COOKIE = "jobtracker_oauth_verifier"
 NONCE_COOKIE = "jobtracker_oauth_nonce"
 OAUTH_COOKIE_PATH = "/api/auth"
+REFRESH_COOKIE_PATH = "/api"
+SESSION_MAX_AGE_SECONDS = 60 * 60
+REFRESH_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
+
+logger = logging.getLogger(__name__)
+
+
+class _RefreshFailed(Exception):
+    """Raised when Cognito cannot renew the browser's admin session."""
 
 
 def _require_configuration() -> None:
@@ -90,7 +101,87 @@ def _decode_id_token(token: str) -> dict:
     return claims
 
 
-def _admin_claims_from_request(request: Request, *, required: bool) -> dict | None:
+def _set_session_cookie(response: Response, id_token: str, claims: dict) -> None:
+    expires_at = int(claims["exp"])
+    remaining_lifetime = expires_at - int(datetime.now(timezone.utc).timestamp())
+    response.set_cookie(
+        SESSION_COOKIE,
+        id_token,
+        max_age=max(1, min(SESSION_MAX_AGE_SECONDS, remaining_lifetime)),
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/",
+    )
+
+
+def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
+    response.set_cookie(
+        REFRESH_COOKIE,
+        refresh_token,
+        max_age=REFRESH_MAX_AGE_SECONDS,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path=REFRESH_COOKIE_PATH,
+    )
+
+
+def clear_auth_cookies(response: Response) -> None:
+    """Expire both browser credentials using their original cookie paths."""
+    response.delete_cookie(SESSION_COOKIE, path="/")
+    response.delete_cookie(REFRESH_COOKIE, path=REFRESH_COOKIE_PATH)
+
+
+def _refresh_admin_session(request: Request, response: Response) -> dict:
+    refresh_token = request.cookies.get(REFRESH_COOKIE, "")
+    if not refresh_token:
+        raise _RefreshFailed("Refresh cookie is missing")
+
+    try:
+        token_response = requests.post(
+            f"{COGNITO_DOMAIN}/oauth2/token",
+            data={
+                "grant_type": "refresh_token",
+                "client_id": COGNITO_CLIENT_ID,
+                "refresh_token": refresh_token,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=10,
+        )
+    except requests.RequestException as exc:
+        raise _RefreshFailed("Cognito token refresh request failed") from exc
+
+    if not token_response.ok:
+        raise _RefreshFailed("Cognito rejected the refresh token")
+
+    try:
+        token_payload = token_response.json()
+        id_token = token_payload["id_token"]
+        claims = _decode_id_token(id_token)
+    except (KeyError, ValueError, jwt.PyJWTError) as exc:
+        raise _RefreshFailed("Cognito returned an invalid refreshed session") from exc
+
+    _set_session_cookie(response, id_token, claims)
+    rotated_refresh_token = token_payload.get("refresh_token")
+    if rotated_refresh_token:
+        _set_refresh_cookie(response, rotated_refresh_token)
+    return claims
+
+
+def _clear_failed_session(request: Request) -> None:
+    # Dependencies that raise HTTPException don't reliably carry cookies from
+    # the injected Response. The API middleware observes this flag and applies
+    # the same cleanup to the final error response.
+    request.state.clear_auth_cookies = True
+
+
+def _admin_claims_from_request(
+    request: Request,
+    response: Response,
+    *,
+    required: bool,
+) -> dict | None:
     if not AUTH_ENABLED:
         # Preserve the frictionless local-development workflow. Production
         # explicitly sets AUTH_ENABLED=true in the Kubernetes ConfigMap.
@@ -99,8 +190,9 @@ def _admin_claims_from_request(request: Request, *, required: bool) -> dict | No
             "cognito:groups": [COGNITO_ADMIN_GROUP],
         }
 
-    token = request.cookies.get(SESSION_COOKIE)
-    if not token:
+    token = request.cookies.get(SESSION_COOKIE, "")
+    refresh_token = request.cookies.get(REFRESH_COOKIE, "")
+    if not token and not refresh_token:
         if required:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -109,12 +201,21 @@ def _admin_claims_from_request(request: Request, *, required: bool) -> dict | No
         return None
 
     try:
-        claims = _decode_id_token(token)
-    except jwt.PyJWTError:
+        if token:
+            try:
+                claims = _decode_id_token(token)
+            except jwt.ExpiredSignatureError:
+                claims = _refresh_admin_session(request, response)
+        else:
+            # Browsers remove the one-hour ID-token cookie at expiration, so a
+            # surviving refresh cookie must also trigger silent renewal.
+            claims = _refresh_admin_session(request, response)
+    except (jwt.PyJWTError, _RefreshFailed):
+        _clear_failed_session(request)
         if required:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Admin session is invalid or expired",
+                detail="Admin session expired; sign in again",
             )
         return None
 
@@ -129,14 +230,14 @@ def _admin_claims_from_request(request: Request, *, required: bool) -> dict | No
     return claims
 
 
-def optional_admin(request: Request) -> dict | None:
+def optional_admin(request: Request, response: Response) -> dict | None:
     """Return verified admin claims or ``None`` for an anonymous viewer."""
-    return _admin_claims_from_request(request, required=False)
+    return _admin_claims_from_request(request, response, required=False)
 
 
-def require_admin(request: Request) -> dict:
+def require_admin(request: Request, response: Response) -> dict:
     """Require a Cognito admin session and a same-origin browser mutation."""
-    claims = _admin_claims_from_request(request, required=True)
+    claims = _admin_claims_from_request(request, response, required=True)
     if AUTH_ENABLED and request.method not in {"GET", "HEAD", "OPTIONS"}:
         origin = request.headers.get("origin", "").rstrip("/")
         if origin != PUBLIC_BASE_URL:
@@ -147,13 +248,13 @@ def require_admin(request: Request) -> dict:
     return claims
 
 
-def auth_status(request: Request) -> dict:
-    claims = optional_admin(request)
+def auth_status(request: Request, response: Response) -> dict:
+    claims = optional_admin(request, response)
     return {
         "enabled": AUTH_ENABLED,
         "authenticated": claims is not None and AUTH_ENABLED,
         "can_manage": claims is not None,
-        "username": (claims or {}).get("cognito:username"),
+        "email": (claims or {}).get("email"),
     }
 
 
@@ -224,7 +325,14 @@ def finish_login(request: Request, code: str, state_value: str) -> RedirectRespo
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Cognito rejected the authorization code",
         )
-    id_token = token_response.json().get("id_token", "")
+    token_payload = token_response.json()
+    id_token = token_payload.get("id_token", "")
+    refresh_token = token_payload.get("refresh_token", "")
+    if not refresh_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Cognito did not return a refresh token",
+        )
     try:
         claims = _decode_id_token(id_token)
     except jwt.PyJWTError as exc:
@@ -243,24 +351,34 @@ def finish_login(request: Request, code: str, state_value: str) -> RedirectRespo
             detail="Administrator group membership required",
         )
 
-    expires_at = int(claims["exp"])
-    max_age = max(1, min(3600, expires_at - int(datetime.now(timezone.utc).timestamp())))
     response = RedirectResponse(f"{PUBLIC_BASE_URL}/", 303)
-    response.set_cookie(
-        SESSION_COOKIE,
-        id_token,
-        max_age=max_age,
-        httponly=True,
-        secure=True,
-        samesite="lax",
-        path="/",
-    )
+    _set_session_cookie(response, id_token, claims)
+    _set_refresh_cookie(response, refresh_token)
     for cookie_name in (STATE_COOKIE, VERIFIER_COOKIE, NONCE_COOKIE):
         response.delete_cookie(cookie_name, path=OAUTH_COOKIE_PATH)
     return response
 
 
-def logout() -> RedirectResponse:
+def logout(request: Request) -> RedirectResponse:
+    refresh_token = request.cookies.get(REFRESH_COOKIE, "")
+    if AUTH_ENABLED and COGNITO_DOMAIN and COGNITO_CLIENT_ID and refresh_token:
+        try:
+            revoke_response = requests.post(
+                f"{COGNITO_DOMAIN}/oauth2/revoke",
+                data={
+                    "token": refresh_token,
+                    "client_id": COGNITO_CLIENT_ID,
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                timeout=10,
+            )
+            if not revoke_response.ok:
+                logger.warning("Cognito rejected refresh-token revocation during logout")
+        except requests.RequestException:
+            # Local logout must still complete if Cognito is temporarily
+            # unreachable. The token will expire and rotation limits replay.
+            logger.warning("Cognito refresh-token revocation request failed")
+
     if not AUTH_ENABLED or not COGNITO_DOMAIN or not COGNITO_CLIENT_ID:
         response = RedirectResponse(f"{PUBLIC_BASE_URL}/", 303)
     else:
@@ -271,5 +389,5 @@ def logout() -> RedirectResponse:
             }
         )
         response = RedirectResponse(f"{COGNITO_DOMAIN}/logout?{query}", 303)
-    response.delete_cookie(SESSION_COOKIE, path="/")
+    clear_auth_cookies(response)
     return response

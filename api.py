@@ -7,7 +7,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import requests
-from fastapi import BackgroundTasks, Depends, FastAPI, Query, Request, status
+from fastapi import BackgroundTasks, Depends, FastAPI, Query, Request, Response, status
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -31,6 +31,7 @@ from keywords_store import get_keywords, save_keywords
 from auth import (
     auth_status,
     begin_login,
+    clear_auth_cookies,
     finish_login,
     logout,
     optional_admin,
@@ -59,6 +60,8 @@ async def enforce_origin_boundary(request: Request, call_next):
             return JSONResponse(status_code=403, content={"detail": "Forbidden"})
 
     response = await call_next(request)
+    if getattr(request.state, "clear_auth_cookies", False):
+        clear_auth_cookies(response)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
@@ -355,8 +358,8 @@ def update_keyword_config(
 
 
 @app.get("/api/auth/status")
-def get_auth_status(request: Request):
-    return auth_status(request)
+def get_auth_status(request: Request, response: Response):
+    return auth_status(request, response)
 
 
 @app.get("/api/auth/login", response_class=RedirectResponse)
@@ -374,8 +377,8 @@ def auth_callback(
 
 
 @app.get("/api/auth/logout", response_class=RedirectResponse)
-def end_session():
-    return logout()
+def end_session(request: Request):
+    return logout(request)
 
 
 # Serve built frontend in production (after `npm run build`)
