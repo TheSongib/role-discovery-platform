@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlparse
 
+import jwt
 from fastapi.testclient import TestClient
 
 import api
@@ -171,11 +172,14 @@ class CognitoFlowTests(unittest.TestCase):
 
     def test_callback_sets_httponly_session_for_admin_group(self):
         token_response = Mock(ok=True)
-        token_response.json.return_value = {"id_token": "verified-id-token"}
+        token_response.json.return_value = {
+            "id_token": "verified-id-token",
+            "refresh_token": "initial-refresh-token",
+        }
         claims = {
             "sub": "admin-user",
             "nonce": "expected-nonce",
-            "exp": int(time.time()) + 900,
+            "exp": int(time.time()) + 7200,
             "cognito:groups": ["admins"],
         }
         with (
@@ -201,7 +205,237 @@ class CognitoFlowTests(unittest.TestCase):
         self.assertIn("verified-id-token", session_cookie)
         self.assertIn("HttpOnly", session_cookie)
         self.assertIn("Secure", session_cookie)
+        self.assertIn("Max-Age=3600", session_cookie)
+        refresh_cookie = next(
+            cookie
+            for cookie in response.headers.get_list("set-cookie")
+            if cookie.startswith(f"{auth.REFRESH_COOKIE}=")
+        )
+        self.assertIn("initial-refresh-token", refresh_cookie)
+        self.assertIn("HttpOnly", refresh_cookie)
+        self.assertIn("Secure", refresh_cookie)
+        self.assertIn("SameSite=lax", refresh_cookie)
+        self.assertIn("Path=/api", refresh_cookie)
+        self.assertIn(f"Max-Age={30 * 24 * 60 * 60}", refresh_cookie)
         token_response.json.assert_called_once_with()
+
+    def test_auth_status_refreshes_expired_session_and_rotates_refresh_cookie(self):
+        token_response = Mock(ok=True)
+        token_response.json.return_value = {
+            "id_token": "renewed-id-token",
+            "refresh_token": "rotated-refresh-token",
+        }
+        renewed_claims = {
+            "sub": "admin-user",
+            "cognito:username": "admin",
+            "exp": int(time.time()) + 3600,
+            "cognito:groups": ["admins"],
+        }
+        with (
+            patch("auth.requests.post", return_value=token_response) as token_request,
+            patch(
+                "auth._decode_id_token",
+                side_effect=[
+                    jwt.ExpiredSignatureError("expired"),
+                    renewed_claims,
+                ],
+            ),
+        ):
+            response = self.client.get(
+                "/api/auth/status",
+                cookies={
+                    auth.SESSION_COOKIE: "expired-id-token",
+                    auth.REFRESH_COOKIE: "current-refresh-token",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "enabled": True,
+                "authenticated": True,
+                "can_manage": True,
+                "username": "admin",
+            },
+        )
+        token_request.assert_called_once_with(
+            f"{auth.COGNITO_DOMAIN}/oauth2/token",
+            data={
+                "grant_type": "refresh_token",
+                "client_id": auth.COGNITO_CLIENT_ID,
+                "refresh_token": "current-refresh-token",
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=10,
+        )
+        cookies = response.headers.get_list("set-cookie")
+        self.assertTrue(
+            any(
+                cookie.startswith(f"{auth.SESSION_COOKIE}=renewed-id-token")
+                for cookie in cookies
+            )
+        )
+        self.assertTrue(
+            any(
+                cookie.startswith(
+                    f"{auth.REFRESH_COOKIE}=rotated-refresh-token"
+                )
+                for cookie in cookies
+            )
+        )
+
+    def test_admin_operation_refreshes_an_expired_id_token(self):
+        token_response = Mock(ok=True)
+        token_response.json.return_value = {
+            "id_token": "renewed-id-token",
+            "refresh_token": "rotated-refresh-token",
+        }
+        renewed_claims = {
+            "sub": "admin-user",
+            "exp": int(time.time()) + 3600,
+            "cognito:groups": ["admins"],
+        }
+        with (
+            patch("auth.requests.post", return_value=token_response),
+            patch(
+                "auth._decode_id_token",
+                side_effect=[
+                    jwt.ExpiredSignatureError("expired"),
+                    renewed_claims,
+                ],
+            ),
+            patch("api._run_scan") as run_scan,
+        ):
+            response = self.client.post(
+                "/api/scan",
+                cookies={
+                    auth.SESSION_COOKIE: "expired-id-token",
+                    auth.REFRESH_COOKIE: "current-refresh-token",
+                },
+                headers={
+                    "origin": "https://example.execute-api.us-east-1.amazonaws.com"
+                },
+            )
+
+        self.assertEqual(response.status_code, 202)
+        run_scan.assert_called_once_with("manual")
+        self.assertTrue(
+            any(
+                cookie.startswith(f"{auth.SESSION_COOKIE}=renewed-id-token")
+                for cookie in response.headers.get_list("set-cookie")
+            )
+        )
+
+    def test_auth_status_refreshes_after_browser_removes_expired_id_cookie(self):
+        token_response = Mock(ok=True)
+        token_response.json.return_value = {
+            "id_token": "renewed-id-token",
+            "refresh_token": "rotated-refresh-token",
+        }
+        renewed_claims = {
+            "sub": "admin-user",
+            "exp": int(time.time()) + 3600,
+            "cognito:groups": ["admins"],
+        }
+        with (
+            patch("auth.requests.post", return_value=token_response),
+            patch("auth._decode_id_token", return_value=renewed_claims),
+        ):
+            response = self.client.get(
+                "/api/auth/status",
+                cookies={auth.REFRESH_COOKIE: "current-refresh-token"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["authenticated"])
+        self.assertTrue(response.json()["can_manage"])
+
+    def test_failed_status_refresh_clears_both_auth_cookies(self):
+        token_response = Mock(ok=False)
+        with patch("auth.requests.post", return_value=token_response):
+            response = self.client.get(
+                "/api/auth/status",
+                cookies={auth.REFRESH_COOKIE: "rejected-refresh-token"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["authenticated"])
+        self.assertFalse(response.json()["can_manage"])
+        cookies = response.headers.get_list("set-cookie")
+        self.assertTrue(
+            any(
+                cookie.startswith(f'{auth.SESSION_COOKIE}=""')
+                and "Max-Age=0" in cookie
+                for cookie in cookies
+            )
+        )
+        self.assertTrue(
+            any(
+                cookie.startswith(f'{auth.REFRESH_COOKIE}=""')
+                and "Max-Age=0" in cookie
+                for cookie in cookies
+            )
+        )
+
+    def test_failed_admin_refresh_returns_401_and_clears_both_cookies(self):
+        token_response = Mock(ok=False)
+        with patch("auth.requests.post", return_value=token_response):
+            response = self.client.post(
+                "/api/scan",
+                cookies={auth.REFRESH_COOKIE: "rejected-refresh-token"},
+                headers={
+                    "origin": "https://example.execute-api.us-east-1.amazonaws.com"
+                },
+            )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertIn("sign in again", response.json()["detail"])
+        cookies = response.headers.get_list("set-cookie")
+        self.assertTrue(
+            any(
+                cookie.startswith(f'{auth.SESSION_COOKIE}=""')
+                and "Max-Age=0" in cookie
+                for cookie in cookies
+            )
+        )
+        self.assertTrue(
+            any(
+                cookie.startswith(f'{auth.REFRESH_COOKIE}=""')
+                and "Max-Age=0" in cookie
+                for cookie in cookies
+            )
+        )
+
+    def test_logout_revokes_refresh_token_and_clears_both_cookies(self):
+        revoke_response = Mock(ok=True)
+        with patch("auth.requests.post", return_value=revoke_response) as revoke:
+            response = self.client.get(
+                "/api/auth/logout",
+                cookies={
+                    auth.SESSION_COOKIE: "current-id-token",
+                    auth.REFRESH_COOKIE: "current-refresh-token",
+                },
+                follow_redirects=False,
+            )
+
+        self.assertEqual(response.status_code, 303)
+        revoke.assert_called_once_with(
+            f"{auth.COGNITO_DOMAIN}/oauth2/revoke",
+            data={
+                "token": "current-refresh-token",
+                "client_id": auth.COGNITO_CLIENT_ID,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=10,
+        )
+        cookies = response.headers.get_list("set-cookie")
+        self.assertTrue(
+            any(cookie.startswith(f'{auth.SESSION_COOKIE}=""') for cookie in cookies)
+        )
+        self.assertTrue(
+            any(cookie.startswith(f'{auth.REFRESH_COOKIE}=""') for cookie in cookies)
+        )
 
 
 if __name__ == "__main__":

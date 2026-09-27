@@ -261,6 +261,13 @@ aws cognito-idp admin-add-user-to-group \
 The invitation contains a temporary password. On first login, Cognito requires
 a replacement password and TOTP authenticator enrollment.
 
+Admin browser sessions use a one-hour ID token plus a rotating refresh token
+stored in a separate Secure, HttpOnly cookie. The application silently renews
+the short-lived ID token for up to 30 days, including after pod deployments or
+browser restarts. Explicit logout revokes the refresh token in Cognito and
+clears both cookies. After this session configuration is first deployed,
+existing sessions must sign in once to receive a refresh token.
+
 ## 6. Open the public site
 
 After the protected pod is healthy, set
