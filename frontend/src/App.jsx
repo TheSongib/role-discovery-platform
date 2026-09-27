@@ -402,7 +402,7 @@ export default function App() {
   const [maxAge, setMaxAge]         = useState(3)
   const [showSettings, setShowSettings] = useState(false)
   const [latestScan, setLatestScan] = useState(null)
-  const [auth, setAuth]             = useState({ enabled: false, authenticated: false, can_manage: false, username: null })
+  const [auth, setAuth]             = useState({ enabled: false, authenticated: false, can_manage: false, email: null })
   const [authLoaded, setAuthLoaded] = useState(false)
 
   const AGE_OPTIONS = [
@@ -419,7 +419,7 @@ export default function App() {
         setAuth(data)
         if (!data.can_manage) setShowHidden(false)
       })
-      .catch(() => setAuth({ enabled: false, authenticated: false, can_manage: false, username: null }))
+      .catch(() => setAuth({ enabled: false, authenticated: false, can_manage: false, email: null }))
       .finally(() => setAuthLoaded(true))
   }
 
@@ -621,9 +621,20 @@ export default function App() {
                 </button>
 
                 {auth.enabled && (
-                  <a href="/api/auth/logout" className="ml-1 text-xs font-medium text-slate-500 transition-colors hover:text-slate-200">
-                    Sign out{auth.username ? ` (${auth.username})` : ''}
-                  </a>
+                  <>
+                    <span
+                      title={auth.email || 'Authenticated administrator'}
+                      className="ml-1 flex max-w-[220px] items-center gap-1.5 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2.5 py-1 text-xs font-semibold text-emerald-200 shadow-[0_0_18px_rgba(52,211,153,0.12)]"
+                    >
+                      <svg className="h-3.5 w-3.5 shrink-0 text-emerald-300" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                        <path fillRule="evenodd" d="M16.704 5.292a1 1 0 010 1.416l-7.5 7.5a1 1 0 01-1.416 0l-3.5-3.5a1 1 0 011.416-1.416l2.792 2.793 6.792-6.793a1 1 0 011.416 0z" clipRule="evenodd" />
+                      </svg>
+                      <span className="truncate">{auth.email || 'Authenticated'}</span>
+                    </span>
+                    <a href="/api/auth/logout" className="text-xs font-medium text-slate-500 transition-colors hover:text-slate-200">
+                      Sign out
+                    </a>
+                  </>
                 )}
               </>
             ) : authLoaded && auth.enabled ? (

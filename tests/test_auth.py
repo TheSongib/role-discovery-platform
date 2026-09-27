@@ -228,6 +228,7 @@ class CognitoFlowTests(unittest.TestCase):
         renewed_claims = {
             "sub": "admin-user",
             "cognito:username": "admin",
+            "email": "admin@example.com",
             "exp": int(time.time()) + 3600,
             "cognito:groups": ["admins"],
         }
@@ -256,7 +257,7 @@ class CognitoFlowTests(unittest.TestCase):
                 "enabled": True,
                 "authenticated": True,
                 "can_manage": True,
-                "username": "admin",
+                "email": "admin@example.com",
             },
         )
         token_request.assert_called_once_with(

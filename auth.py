@@ -254,7 +254,7 @@ def auth_status(request: Request, response: Response) -> dict:
         "enabled": AUTH_ENABLED,
         "authenticated": claims is not None and AUTH_ENABLED,
         "can_manage": claims is not None,
-        "username": (claims or {}).get("cognito:username"),
+        "email": (claims or {}).get("email"),
     }
 
 
