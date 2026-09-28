@@ -4,9 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import api
 import db
-from scraper import ScrapeResult
 
 
 def job_payload(
@@ -32,37 +30,8 @@ def job_payload(
     }
 
 
-def scrape_result(jobs):
-    return ScrapeResult(
-        jobs,
-        total_found=len(jobs),
-        not_remote=0,
-        keyword_filtered=0,
-    )
-
-
 class JobLifecycleTests(unittest.TestCase):
-    def test_legacy_hidden_job_can_use_first_persisted_ats_timestamp(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            database_path = Path(tmp_dir) / "jobs.db"
-            original = job_payload(date_found="2026-08-01T12:00:00+00:00")
-            refreshed = job_payload(
-                date_found="2026-08-19T12:00:00+00:00",
-                ats_updated_at="2026-08-18T08:30:00+00:00",
-            )
-
-            with patch.object(db, "DB_PATH", database_path):
-                db.init_db()
-                db.upsert_job(original)
-                db.set_hidden(self._only_job()["id"], True)
-
-                self.assertTrue(db.upsert_job(refreshed))
-                resurfaced = self._only_job()
-
-            self.assertEqual(resurfaced["hidden"], 0)
-            self.assertEqual(resurfaced["date_found"], refreshed["date_found"])
-
-    def test_hidden_job_with_changed_ats_timestamp_is_resurfaced(self):
+    def test_hidden_job_with_changed_ats_timestamp_stays_hidden(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             database_path = Path(tmp_dir) / "jobs.db"
             original = job_payload(
@@ -82,152 +51,86 @@ class JobLifecycleTests(unittest.TestCase):
                 stored_id = self._only_job()["id"]
                 db.set_hidden(stored_id, True)
 
-                self.assertTrue(db.upsert_job(refreshed))
-                resurfaced = self._only_job()
+                self.assertFalse(db.upsert_job(refreshed))
+                stored = self._only_job()
 
-            self.assertEqual(resurfaced["id"], stored_id)
-            self.assertEqual(resurfaced["hidden"], 0)
-            self.assertEqual(resurfaced["date_found"], refreshed["date_found"])
-            self.assertEqual(
-                resurfaced["date_posted"], refreshed["ats_updated_at"]
-            )
-            self.assertEqual(
-                resurfaced["ats_updated_at"], refreshed["ats_updated_at"]
-            )
+            self.assertEqual(stored["id"], stored_id)
+            self.assertEqual(stored["hidden"], 1)
+            self.assertEqual(stored["date_found"], original["date_found"])
+            self.assertEqual(stored["date_posted"], original["date_posted"])
+            self.assertEqual(stored["ats_updated_at"], refreshed["ats_updated_at"])
 
-    def test_hidden_job_with_unchanged_ats_timestamp_stays_hidden(self):
+    def test_job_is_removed_after_24_hours_absent_and_repost_is_new(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             database_path = Path(tmp_dir) / "jobs.db"
-            original = job_payload(
-                date_found="2026-08-01T12:00:00+00:00",
-                ats_updated_at="2026-07-15T10:00:00+00:00",
-            )
-            seen_again = job_payload(
-                date_found="2026-08-18T12:00:00+00:00",
-                ats_updated_at=original["ats_updated_at"],
-            )
+            first_posting = job_payload()
+            reposted = job_payload(date_found="2026-09-01T12:00:00+00:00")
+            with patch.object(db, "DB_PATH", database_path):
+                db.init_db()
+                self.assertTrue(db.upsert_job(first_posting))
+                original_id = self._only_job()["id"]
 
+                with patch.object(db, "_utc_now", return_value="2026-09-02T12:00:00+00:00"):
+                    self.assertEqual(db.reconcile_company_jobs("Acme", []), 0)
+                self.assertEqual(
+                    self._only_job()["missing_since"],
+                    "2026-09-02T12:00:00+00:00",
+                )
+
+                with patch.object(db, "_utc_now", return_value="2026-09-03T11:59:59+00:00"):
+                    self.assertEqual(db.reconcile_company_jobs("Acme", []), 0)
+                self.assertIsNotNone(self._get_job())
+
+                with patch.object(db, "_utc_now", return_value="2026-09-03T12:00:00+00:00"):
+                    self.assertEqual(db.reconcile_company_jobs("Acme", []), 1)
+                self.assertIsNone(self._get_job())
+
+                self.assertTrue(db.upsert_job(reposted))
+                new_record = self._only_job()
+
+            self.assertGreater(new_record["id"], original_id)
+            self.assertEqual(new_record["date_found"], reposted["date_found"])
+            self.assertEqual(new_record["missed_scans"], 0)
+
+    def test_reappearance_before_24_hours_resets_absence(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            database_path = Path(tmp_dir) / "jobs.db"
+            original = job_payload()
+            seen_again = job_payload(date_found="2026-09-03T11:00:00+00:00")
             with patch.object(db, "DB_PATH", database_path):
                 db.init_db()
                 db.upsert_job(original)
-                db.set_hidden(self._only_job()["id"], True)
+                original_id = self._only_job()["id"]
+                with patch.object(db, "_utc_now", return_value="2026-09-02T12:00:00+00:00"):
+                    db.reconcile_company_jobs("Acme", [])
 
                 self.assertFalse(db.upsert_job(seen_again))
                 stored = self._only_job()
 
-            self.assertEqual(stored["hidden"], 1)
-            self.assertEqual(stored["date_found"], original["date_found"])
-            self.assertEqual(stored["date_posted"], original["date_posted"])
+            self.assertEqual(stored["id"], original_id)
+            self.assertIsNone(stored["missing_since"])
+            self.assertEqual(stored["missed_scans"], 0)
 
-    def test_hidden_job_with_older_ats_timestamp_stays_hidden(self):
+    def test_permanently_ignored_job_is_retained_and_never_listed(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             database_path = Path(tmp_dir) / "jobs.db"
-            original = job_payload(
-                date_found="2026-08-01T12:00:00+00:00",
-                ats_updated_at="2026-07-15T10:00:00+00:00",
-            )
-            stale_signal = job_payload(
-                date_found="2026-08-18T12:00:00+00:00",
-                ats_updated_at="2026-07-14T10:00:00+00:00",
-            )
-
+            original = job_payload()
             with patch.object(db, "DB_PATH", database_path):
                 db.init_db()
                 db.upsert_job(original)
-                db.set_hidden(self._only_job()["id"], True)
+                job_id = self._only_job()["id"]
+                db.set_ignored_permanently(job_id)
 
-                self.assertFalse(db.upsert_job(stale_signal))
+                self.assertEqual(db.list_jobs(show_hidden=False, max_age_days=0), [])
+                self.assertEqual(db.list_jobs(show_hidden=True, max_age_days=0), [])
+                self.assertEqual(db.get_all_jobs(), [])
+                with patch.object(db, "_utc_now", return_value="2026-10-01T12:00:00+00:00"):
+                    self.assertEqual(db.reconcile_company_jobs("Acme", []), 0)
+                self.assertFalse(db.upsert_job(original))
                 stored = self._only_job()
 
+            self.assertEqual(stored["ignored_permanently"], 1)
             self.assertEqual(stored["hidden"], 1)
-
-    def test_same_day_ats_edit_does_not_resurface_later(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            database_path = Path(tmp_dir) / "jobs.db"
-            original = job_payload(
-                date_found="2026-08-18T12:00:00+00:00",
-                ats_updated_at="2026-08-18T11:00:00+00:00",
-            )
-            edited = job_payload(
-                date_found="2026-08-18T18:00:00+00:00",
-                ats_updated_at="2026-08-18T17:00:00+00:00",
-            )
-            later_scan = job_payload(
-                date_found="2026-08-22T12:00:00+00:00",
-                ats_updated_at=edited["ats_updated_at"],
-            )
-
-            with patch.object(db, "DB_PATH", database_path):
-                db.init_db()
-                db.upsert_job(original)
-                db.set_hidden(self._only_job()["id"], True)
-
-                self.assertFalse(db.upsert_job(edited))
-                self.assertFalse(db.upsert_job(later_scan))
-                stored = self._only_job()
-
-            self.assertEqual(stored["hidden"], 1)
-            self.assertEqual(stored["ats_updated_at"], edited["ats_updated_at"])
-
-    def test_three_consecutive_successful_misses_delete_and_repost_as_new(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            database_path = Path(tmp_dir) / "jobs.db"
-            first_posting = job_payload()
-            seen_again = job_payload(date_found="2026-08-19T12:00:00+00:00")
-            reposted = job_payload(date_found="2026-09-01T12:00:00+00:00")
-            empty = scrape_result([])
-
-            scrape_results = [
-                scrape_result([first_posting]),
-                RuntimeError("ATS unavailable"),
-                empty,
-                empty,
-                scrape_result([seen_again]),
-                empty,
-                empty,
-                empty,
-                scrape_result([reposted]),
-            ]
-
-            with (
-                patch.object(db, "DB_PATH", database_path),
-                patch.object(api, "COMPANIES", [{"name": "Acme", "ats": "test"}]),
-                patch.object(api, "scrape_company", side_effect=scrape_results),
-                patch.object(api, "_notify"),
-            ):
-                api._run_scan()
-                original = self._only_job()
-                original_id = original["id"]
-                self.assertEqual(original["missed_scans"], 0)
-
-                failed_scan = api._run_scan()
-                self.assertEqual(failed_scan["status"], "failed")
-                self.assertEqual(self._only_job()["missed_scans"], 0)
-
-                api._run_scan()
-                self.assertEqual(self._only_job()["missed_scans"], 1)
-
-                api._run_scan()
-                self.assertEqual(self._only_job()["missed_scans"], 2)
-
-                api._run_scan()
-                rediscovered = self._only_job()
-                self.assertEqual(rediscovered["id"], original_id)
-                self.assertEqual(rediscovered["missed_scans"], 0)
-                self.assertEqual(rediscovered["date_found"], first_posting["date_found"])
-
-                api._run_scan()
-                api._run_scan()
-                api._run_scan()
-                self.assertIsNone(self._get_job())
-
-                repost_scan = api._run_scan()
-                new_record = self._only_job()
-
-            self.assertEqual(repost_scan["new_jobs"], 1)
-            self.assertGreater(new_record["id"], original_id)
-            self.assertEqual(new_record["date_found"], reposted["date_found"])
-            self.assertEqual(new_record["missed_scans"], 0)
 
     def test_reconciliation_only_changes_the_successfully_scanned_company(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -237,7 +140,9 @@ class JobLifecycleTests(unittest.TestCase):
                 db.upsert_job(job_payload(company="Acme"))
                 db.upsert_job(job_payload(company="Beta"))
 
-                for _ in range(3):
+                with patch.object(db, "_utc_now", return_value="2026-09-02T12:00:00+00:00"):
+                    db.reconcile_company_jobs("Acme", [])
+                with patch.object(db, "_utc_now", return_value="2026-09-03T12:00:00+00:00"):
                     db.reconcile_company_jobs("Acme", [])
 
                 with db.get_conn() as conn:
@@ -296,6 +201,8 @@ class JobLifecycleTests(unittest.TestCase):
 
             self.assertIn("missed_scans", columns)
             self.assertIn("ats_updated_at", columns)
+            self.assertIn("missing_since", columns)
+            self.assertIn("ignored_permanently", columns)
             self.assertEqual(missed_scans, 0)
 
     @staticmethod

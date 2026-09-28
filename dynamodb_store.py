@@ -21,8 +21,7 @@ from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
 
-MISSED_SCAN_DELETE_THRESHOLD = 3
-REPOST_MIN_AGE = timedelta(days=1)
+JOB_ABSENCE_RETENTION = timedelta(hours=24)
 _JOB_FIELDS = (
     "title",
     "company",
@@ -38,6 +37,8 @@ _JOB_FIELDS = (
     "source_url",
     "hidden",
     "missed_scans",
+    "missing_since",
+    "ignored_permanently",
 )
 _INTERNAL_JOB_FIELDS = {"job_key", "feed_bucket", "feed_sort"}
 
@@ -128,11 +129,14 @@ def build_job_item(job: Mapping[str, Any]) -> dict[str, Any]:
             "last_seen": str(job.get("last_seen") or date_found),
             "hidden": int(hidden),
             "missed_scans": int(job.get("missed_scans") or 0),
+            "ignored_permanently": int(bool(job.get("ignored_permanently", 0))),
             "is_remote": int(bool(job.get("is_remote", 0))),
             "feed_bucket": feed_bucket,
             "feed_sort": feed_sort,
         }
     )
+    if not job.get("missing_since"):
+        item.pop("missing_since", None)
     return item
 
 
@@ -158,78 +162,23 @@ def _parse_datetime(value: str | None) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
-def _is_qualifying_repost(existing: Mapping[str, Any], job: Mapping[str, Any]) -> bool:
-    if not existing.get("hidden"):
-        return False
-
-    incoming_update = job.get("ats_updated_at")
-    if not incoming_update:
-        return False
-
-    stored_update = existing.get("ats_updated_at")
-    if not stored_update:
-        ats_update = _parse_datetime(str(incoming_update))
-        first_found = _parse_datetime(existing.get("date_found"))
-        signal_changed = bool(
-            ats_update and first_found and ats_update > first_found
-        )
-    else:
-        incoming_time = _parse_datetime(str(incoming_update))
-        stored_time = _parse_datetime(str(stored_update))
-        if incoming_time and stored_time:
-            signal_changed = incoming_time > stored_time
-        else:
-            signal_changed = incoming_update != stored_update
-
-    first_found = _parse_datetime(existing.get("date_found"))
-    seen_now = _parse_datetime(job.get("date_found"))
-    old_enough = bool(
-        first_found and seen_now and seen_now - first_found >= REPOST_MIN_AGE
-    )
-    return signal_changed and old_enough
-
-
 def upsert_job(job: Mapping[str, Any]) -> bool:
     table = _jobs_table()
     key = _job_key(job)
     existing = table.get_item(Key={"job_key": key}, ConsistentRead=True).get("Item")
 
     if existing:
-        if _is_qualifying_repost(existing, job):
-            date_found = str(job["date_found"])
-            feed_bucket, feed_sort = _feed_keys(date_found, False, key)
-            table.update_item(
-                Key={"job_key": key},
-                UpdateExpression=(
-                    "SET last_seen = :last_seen, missed_scans = :zero, "
-                    "#hidden = :zero, date_found = :date_found, "
-                    "date_posted = :date_posted, ats_updated_at = :ats, "
-                    "feed_bucket = :feed_bucket, feed_sort = :feed_sort"
-                ),
-                ExpressionAttributeNames={"#hidden": "hidden"},
-                ExpressionAttributeValues={
-                    ":last_seen": str(job["last_seen"]),
-                    ":zero": 0,
-                    ":date_found": date_found,
-                    ":date_posted": str(job["ats_updated_at"]),
-                    ":ats": str(job["ats_updated_at"]),
-                    ":feed_bucket": feed_bucket,
-                    ":feed_sort": feed_sort,
-                },
-            )
-            return True
-
-        expression = "SET last_seen = :last_seen, missed_scans = :zero"
+        set_expressions = ["last_seen = :last_seen", "missed_scans = :zero"]
         values: dict[str, Any] = {
             ":last_seen": str(job["last_seen"]),
             ":zero": 0,
         }
         if job.get("ats_updated_at"):
-            expression += ", ats_updated_at = :ats"
+            set_expressions.append("ats_updated_at = :ats")
             values[":ats"] = str(job["ats_updated_at"])
         table.update_item(
             Key={"job_key": key},
-            UpdateExpression=expression,
+            UpdateExpression=f"SET {', '.join(set_expressions)} REMOVE missing_since",
             ExpressionAttributeValues=values,
         )
         return False
@@ -283,25 +232,41 @@ def reconcile_company_jobs(company: str, seen_jobs: list[dict]) -> int:
     }
 
     deleted = 0
+    observed_at_text = _utc_now()
+    observed_at = _parse_datetime(observed_at_text)
     for stored_job in stored_jobs:
         key = stored_job["job_key"]
         if key in seen_keys:
             table.update_item(
                 Key={"job_key": key},
-                UpdateExpression="SET missed_scans = :zero",
+                UpdateExpression="SET missed_scans = :zero REMOVE missing_since",
                 ExpressionAttributeValues={":zero": 0},
             )
             continue
 
+        if stored_job.get("ignored_permanently"):
+            continue
+
         missed_scans = int(stored_job.get("missed_scans", 0)) + 1
-        if missed_scans >= MISSED_SCAN_DELETE_THRESHOLD:
+        missing_since = _parse_datetime(stored_job.get("missing_since"))
+        if (
+            missing_since
+            and observed_at
+            and observed_at - missing_since >= JOB_ABSENCE_RETENTION
+        ):
             table.delete_item(Key={"job_key": key})
             deleted += 1
         else:
             table.update_item(
                 Key={"job_key": key},
-                UpdateExpression="SET missed_scans = :missed",
-                ExpressionAttributeValues={":missed": missed_scans},
+                UpdateExpression=(
+                    "SET missed_scans = :missed, "
+                    "missing_since = if_not_exists(missing_since, :observed_at)"
+                ),
+                ExpressionAttributeValues={
+                    ":missed": missed_scans,
+                    ":observed_at": observed_at_text,
+                },
             )
     return deleted
 
@@ -344,7 +309,8 @@ def list_jobs(show_hidden: bool = False, max_age_days: int = 3) -> list[dict]:
     public_jobs = [
         _public_job(item)
         for item in items
-        if show_hidden or not bool(item.get("hidden", 0))
+        if not bool(item.get("ignored_permanently", 0))
+        and (show_hidden or not bool(item.get("hidden", 0)))
     ]
     public_jobs.sort(
         key=lambda item: (item.get("date_found") or "", item.get("date_posted") or ""),
@@ -380,6 +346,30 @@ def set_hidden(job_id: str, hidden: bool) -> None:
         ExpressionAttributeNames={"#hidden": "hidden"},
         ExpressionAttributeValues={
             ":hidden": int(hidden),
+            ":bucket": feed_bucket,
+            ":sort": feed_sort,
+        },
+    )
+
+
+def set_ignored_permanently(job_id: str) -> None:
+    table = _jobs_table()
+    response = table.get_item(Key={"job_key": str(job_id)}, ConsistentRead=True)
+    existing = response.get("Item")
+    if not existing:
+        return
+    feed_bucket, feed_sort = _feed_keys(
+        str(existing["date_found"]), True, str(job_id)
+    )
+    table.update_item(
+        Key={"job_key": str(job_id)},
+        UpdateExpression=(
+            "SET ignored_permanently = :one, #hidden = :one, "
+            "feed_bucket = :bucket, feed_sort = :sort REMOVE missing_since"
+        ),
+        ExpressionAttributeNames={"#hidden": "hidden"},
+        ExpressionAttributeValues={
+            ":one": 1,
             ":bucket": feed_bucket,
             ":sort": feed_sort,
         },

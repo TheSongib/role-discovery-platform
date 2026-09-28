@@ -8,8 +8,7 @@ from typing import Iterator
 
 DATA_DIR = Path(os.getenv("DATA_DIR", Path(__file__).parent))
 DB_PATH = DATA_DIR / "jobs.db"
-MISSED_SCAN_DELETE_THRESHOLD = 3
-REPOST_MIN_AGE = timedelta(days=1)
+JOB_ABSENCE_RETENTION = timedelta(hours=24)
 _SQLITE_SCAN_LOCK = threading.Lock()
 
 
@@ -61,7 +60,9 @@ def init_db():
                 date_found  TEXT NOT NULL,
                 last_seen   TEXT NOT NULL,
                 missed_scans INTEGER NOT NULL DEFAULT 0,
+                missing_since TEXT,
                 source_url  TEXT,
+                ignored_permanently INTEGER NOT NULL DEFAULT 0,
                 UNIQUE(title, company, url)
             )
         """)
@@ -71,6 +72,8 @@ def init_db():
             "ALTER TABLE jobs ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE jobs ADD COLUMN missed_scans INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE jobs ADD COLUMN ats_updated_at TEXT",
+            "ALTER TABLE jobs ADD COLUMN missing_since TEXT",
+            "ALTER TABLE jobs ADD COLUMN ignored_permanently INTEGER NOT NULL DEFAULT 0",
         ]:
             try:
                 conn.execute(sql)
@@ -312,50 +315,14 @@ def _parse_datetime(value: str | None) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
-def _is_qualifying_repost(existing: sqlite3.Row, job: dict) -> bool:
-    """Return whether a hidden job has a sufficiently old, advanced ATS signal."""
-    if not existing["hidden"]:
-        return False
-
-    incoming_update = job.get("ats_updated_at")
-    if not incoming_update:
-        return False
-
-    stored_update = existing["ats_updated_at"]
-    if not stored_update:
-        # Existing databases have no historical ATS baseline. Only bootstrap a
-        # repost when the current ATS update is demonstrably newer than when we
-        # first found the job; otherwise establish the baseline without surfacing.
-        ats_update = _parse_datetime(incoming_update)
-        first_found = _parse_datetime(existing["date_found"])
-        signal_changed = bool(
-            ats_update and first_found and ats_update > first_found
-        )
-    else:
-        incoming_time = _parse_datetime(incoming_update)
-        stored_time = _parse_datetime(stored_update)
-        if incoming_time and stored_time:
-            signal_changed = incoming_time > stored_time
-        else:
-            signal_changed = incoming_update != stored_update
-
-    first_found = _parse_datetime(existing["date_found"])
-    seen_now = _parse_datetime(job.get("date_found"))
-    old_enough = bool(
-        first_found
-        and seen_now
-        and seen_now - first_found >= REPOST_MIN_AGE
-    )
-    return signal_changed and old_enough
-
-
 def upsert_job(job: dict) -> bool:
     """
     Insert a job or update scan metadata on an existing one.
 
-    Return True for a newly inserted or newly resurfaced job. A qualifying
-    repost gets fresh found/posted dates so the dashboard and notification path
-    treat it as a new appearance.
+    Return True only for a newly inserted job. ATS update timestamps are kept as
+    metadata, but cannot resurrect a hidden posting. A posting must first be
+    absent long enough for reconciliation to remove it before a later appearance
+    is treated as new.
     """
     if _uses_dynamodb():
         return _dynamo().upsert_job(job)
@@ -363,7 +330,7 @@ def upsert_job(job: dict) -> bool:
     with get_conn() as conn:
         existing = conn.execute(
             """
-            SELECT id, hidden, date_found, ats_updated_at
+            SELECT id
             FROM jobs
             WHERE title = ? AND company = ? AND url = ?
             """,
@@ -371,29 +338,10 @@ def upsert_job(job: dict) -> bool:
         ).fetchone()
 
         if existing:
-            if _is_qualifying_repost(existing, job):
-                conn.execute(
-                    """
-                    UPDATE jobs
-                    SET last_seen = ?, missed_scans = 0, hidden = 0,
-                        date_found = ?, date_posted = ?, ats_updated_at = ?
-                    WHERE id = ?
-                    """,
-                    (
-                        job["last_seen"],
-                        job["date_found"],
-                        job["ats_updated_at"],
-                        job["ats_updated_at"],
-                        existing["id"],
-                    ),
-                )
-                conn.commit()
-                return True
-
             conn.execute(
                 """
                 UPDATE jobs
-                SET last_seen = ?, missed_scans = 0,
+                SET last_seen = ?, missed_scans = 0, missing_since = NULL,
                     ats_updated_at = COALESCE(?, ats_updated_at)
                 WHERE id = ?
                 """,
@@ -431,11 +379,12 @@ def upsert_job(job: dict) -> bool:
 
 
 def reconcile_company_jobs(company: str, seen_jobs: list[dict]) -> int:
-    """Advance missed-scan counts after a successful company scrape.
+    """Track continuous absence after a successful company scrape.
 
-    Jobs returned by the scrape have their counter reset. Stored jobs absent
-    from the result are deleted on their third consecutive successful miss.
-    The caller must not invoke this after a failed or incomplete scrape.
+    Jobs returned by the scrape have their absence state reset. Stored jobs are
+    deleted only after they have been continuously absent for at least 24 hours.
+    Permanently ignored jobs are retained even after they disappear. The caller
+    must not invoke this after a failed or incomplete scrape.
     """
     if _uses_dynamodb():
         return _dynamo().reconcile_company_jobs(company, seen_jobs)
@@ -449,7 +398,8 @@ def reconcile_company_jobs(company: str, seen_jobs: list[dict]) -> int:
     with get_conn() as conn:
         stored_jobs = conn.execute(
             """
-            SELECT id, title, url, missed_scans
+            SELECT id, title, url, missed_scans, missing_since,
+                   ignored_permanently
             FROM jobs
             WHERE company = ?
             """,
@@ -459,25 +409,49 @@ def reconcile_company_jobs(company: str, seen_jobs: list[dict]) -> int:
         seen_ids = []
         missed_updates = []
         delete_ids = []
+        observed_at_text = _utc_now()
+        observed_at = _parse_datetime(observed_at_text)
         for stored_job in stored_jobs:
             if (stored_job["title"], stored_job["url"]) in seen_keys:
                 seen_ids.append((stored_job["id"],))
                 continue
 
             missed_scans = stored_job["missed_scans"] + 1
-            if missed_scans >= MISSED_SCAN_DELETE_THRESHOLD:
+            if stored_job["ignored_permanently"]:
+                continue
+
+            missing_since = _parse_datetime(stored_job["missing_since"])
+            if (
+                missing_since
+                and observed_at
+                and observed_at - missing_since >= JOB_ABSENCE_RETENTION
+            ):
                 delete_ids.append((stored_job["id"],))
             else:
-                missed_updates.append((missed_scans, stored_job["id"]))
+                missed_updates.append(
+                    (
+                        missed_scans,
+                        stored_job["missing_since"] or observed_at_text,
+                        stored_job["id"],
+                    )
+                )
 
         if seen_ids:
             conn.executemany(
-                "UPDATE jobs SET missed_scans = 0 WHERE id = ?",
+                """
+                UPDATE jobs
+                SET missed_scans = 0, missing_since = NULL
+                WHERE id = ?
+                """,
                 seen_ids,
             )
         if missed_updates:
             conn.executemany(
-                "UPDATE jobs SET missed_scans = ? WHERE id = ?",
+                """
+                UPDATE jobs
+                SET missed_scans = ?, missing_since = ?
+                WHERE id = ?
+                """,
                 missed_updates,
             )
         if delete_ids:
@@ -494,7 +468,7 @@ def get_all_jobs(
     if _uses_dynamodb():
         return _dynamo().get_all_jobs(remote_only, max_age_days)
 
-    conditions = []
+    conditions = ["ignored_permanently = 0"]
     if remote_only:
         conditions.append("is_remote = 1")
     if max_age_days is not None:
@@ -518,6 +492,7 @@ def list_jobs(show_hidden: bool = False, max_age_days: int = 3) -> list[dict]:
         return []
 
     conditions = []
+    conditions.append("ignored_permanently = 0")
     parameters = []
     if not show_hidden:
         conditions.append("hidden = 0")
@@ -541,6 +516,21 @@ def set_hidden(job_id: int | str, hidden: bool):
         conn.execute(
             "UPDATE jobs SET hidden = ? WHERE id = ?",
             (int(hidden), int(job_id)),
+        )
+        conn.commit()
+
+
+def set_ignored_permanently(job_id: int | str):
+    if _uses_dynamodb():
+        return _dynamo().set_ignored_permanently(str(job_id))
+    with get_conn() as conn:
+        conn.execute(
+            """
+            UPDATE jobs
+            SET ignored_permanently = 1, hidden = 1, missing_since = NULL
+            WHERE id = ?
+            """,
+            (int(job_id),),
         )
         conn.commit()
 

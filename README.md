@@ -11,7 +11,7 @@ workloads are stateless.
 - Filters for **remote US** roles in **software engineering, security engineering, SRE, DevOps, and IAM**
 - Excludes senior/leadership titles (staff, principal, director, architect, manager)
 - Stores results in SQLite locally or DynamoDB on AWS, with deduplication and repost detection
-- Removes jobs after three consecutive successful company scans no longer find them
+- Removes jobs only after successful company scans have not found them for 24 hours
 - Records every scan and each company's success or failure so broken sources are visible
 - Scans every 15 minutes on weekdays from 7 AM to 8 PM Eastern and hourly at all other times
 - Serves a React frontend with live data, a one-click scan button, and the ability to hide jobs you've already applied to or aren't interested in
@@ -210,30 +210,30 @@ this automatically. Key fields are consistent across both backends:
 
 | Field | Description |
 |---|---|
-| `date_found` | First time this appearance was scraped; reset when a hidden job qualifies as a repost |
+| `date_found` | First time this stored appearance was scraped |
 | `last_seen` | Last scrape run that found this job |
 | `missed_scans` | Consecutive successful company scans that did not find this job |
+| `missing_since` | First successful scan that did not find the job; cleared if it returns |
 | `date_posted` | When the company posted the job (if available) |
-| `ats_updated_at` | ATS timestamp used to detect an updated/reposted listing (when available) |
+| `ats_updated_at` | Latest ATS update timestamp retained as metadata (when available) |
 | `hidden` | Set to 1 when hidden from the UI |
+| `ignored_permanently` | Set to 1 when an administrator permanently suppresses the posting |
 
 `jobs.db` is local only—do not commit it to git. The AWS tables use on-demand
 capacity, server-side encryption, point-in-time recovery, and deletion
 protection. See the deployment guide for the one-time SQLite migration command.
 
 After each successful company scan, matching stored jobs that were not returned
-have `missed_scans` incremented. Seeing a job again resets the counter to zero.
-The row is deleted on the third consecutive miss. Failed company scans do not
-advance the counter. If a deleted posting later returns, it is inserted as a new
-row with a new ID and `date_found` value.
+have `missed_scans` incremented and `missing_since` set on the first miss. The
+row is deleted only after it has been continuously absent for at least 24 hours.
+Seeing a job again clears the absence state, and failed company scans do not
+advance it. If a deleted posting later returns, it is inserted as a new row with
+a fresh `date_found` value and is treated as a new posting.
 
-For ATSes with a usable refresh signal, a hidden row can also be resurfaced
-without first disappearing. If the signal advances at least one day after the
-row's current `date_found`, the row is unhidden, its `date_found` is reset, and
-the ATS refresh time becomes its effective `date_posted`. Greenhouse supplies a
-dedicated `updated_at`; Workday uses its derived posting date except for unstable
-capped values such as `30+ days`; Ashby supplies its last-published time in
-`publishedAt`.
+ATS update timestamps are retained as metadata but do not resurface hidden jobs,
+because many applicant-tracking systems advance those timestamps without a new
+opening. Permanently ignored postings remain in storage, are excluded from both
+active and hidden dashboard views, and are never removed or resurfaced.
 
 ## Scan status
 

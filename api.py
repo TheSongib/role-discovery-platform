@@ -23,6 +23,7 @@ from db import (
     record_company_scan_result,
     release_scan_lock,
     set_hidden,
+    set_ignored_permanently,
     upsert_job,
 )
 from config import COMPANIES
@@ -230,7 +231,7 @@ def _run_scan_unlocked(trigger: str = "manual") -> dict:
             if removed_jobs:
                 print(
                     f"[{company['name']}] removed {removed_jobs} job(s) "
-                    "after 3 consecutive successful misses"
+                    "after at least 24 hours absent"
                 )
             total_found += company_found
             total_seen += len(jobs)
@@ -335,6 +336,16 @@ def patch_job(
 ):
     init_db()
     set_hidden(job_id, payload.hidden)
+    return {"ok": True}
+
+
+@app.post("/api/jobs/{job_id}/ignore")
+def ignore_job_permanently(
+    job_id: str,
+    _admin: dict = Depends(require_admin),
+):
+    init_db()
+    set_ignored_permanently(job_id)
     return {"ok": True}
 
 
