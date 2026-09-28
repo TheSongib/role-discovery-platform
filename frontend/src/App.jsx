@@ -300,6 +300,15 @@ function EyeIcon() {
   )
 }
 
+function XIcon() {
+  return (
+    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+        d="M6 18L18 6M6 6l12 12" />
+    </svg>
+  )
+}
+
 function ScanStatusPanel({ scan }) {
   const [expanded, setExpanded] = useState(false)
 
@@ -492,6 +501,25 @@ export default function App() {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ hidden: nextHidden }),
+      })
+      if (response.status === 401 || response.status === 403) await loadAuth()
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    } catch {
+      loadJobs(maxAge)
+    }
+  }
+
+  async function ignorePermanently(job) {
+    const confirmed = window.confirm(
+      `Permanently ignore “${job.title}” at ${job.company}?\n\n` +
+      'It will never appear again, even if the company reposts it.'
+    )
+    if (!confirmed) return
+
+    setJobs(prev => prev.filter(j => j.id !== job.id))
+    try {
+      const response = await fetch(`/api/jobs/${job.id}/ignore`, {
+        method: 'POST',
       })
       if (response.status === 401 || response.status === 403) await loadAuth()
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
@@ -750,17 +778,27 @@ export default function App() {
 
                       {auth.can_manage && (
                         <td className="whitespace-nowrap px-4 py-3.5">
-                          <button
-                            onClick={() => toggleHidden(job)}
-                            title={job.hidden ? 'Unhide this job' : 'Hide this job'}
-                            className={`rounded-md p-1.5 transition-colors ${
-                              job.hidden
-                                ? 'text-violet-300 hover:bg-violet-400/10 hover:text-violet-200'
-                                : 'text-slate-600 opacity-0 group-hover:opacity-100 hover:bg-white/[0.06] hover:text-slate-300'
-                            }`}
-                          >
-                            {job.hidden ? <EyeIcon /> : <EyeSlashIcon />}
-                          </button>
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => ignorePermanently(job)}
+                              title="Ignore this job permanently"
+                              aria-label={`Permanently ignore ${job.title} at ${job.company}`}
+                              className="rounded-md p-1.5 text-red-400 opacity-0 transition-colors hover:bg-red-400/10 hover:text-red-300 focus:opacity-100 group-hover:opacity-100"
+                            >
+                              <XIcon />
+                            </button>
+                            <button
+                              onClick={() => toggleHidden(job)}
+                              title={job.hidden ? 'Unhide this job' : 'Hide this job'}
+                              className={`rounded-md p-1.5 transition-colors ${
+                                job.hidden
+                                  ? 'text-violet-300 hover:bg-violet-400/10 hover:text-violet-200'
+                                  : 'text-slate-600 opacity-0 group-hover:opacity-100 hover:bg-white/[0.06] hover:text-slate-300 focus:opacity-100'
+                              }`}
+                            >
+                              {job.hidden ? <EyeIcon /> : <EyeSlashIcon />}
+                            </button>
+                          </div>
                         </td>
                       )}
                     </tr>

@@ -47,6 +47,7 @@ class AuthenticationBoundaryTests(unittest.TestCase):
         requests = (
             ("post", "/api/scan", None),
             ("patch", "/api/jobs/job-1", {"hidden": True}),
+            ("post", "/api/jobs/job-1/ignore", None),
             (
                 "put",
                 "/api/config/keywords",
@@ -61,6 +62,24 @@ class AuthenticationBoundaryTests(unittest.TestCase):
                     headers={"origin": origin},
                 )
                 self.assertEqual(response.status_code, 401)
+
+    def test_admin_can_permanently_ignore_job(self):
+        claims = {"sub": "admin-user", "cognito:groups": ["admins"]}
+        origin = "https://example.execute-api.us-east-1.amazonaws.com"
+        with (
+            patch("auth._decode_id_token", return_value=claims),
+            patch("api.init_db"),
+            patch("api.set_ignored_permanently") as set_ignored,
+        ):
+            response = self.client.post(
+                "/api/jobs/job-1/ignore",
+                cookies={auth.SESSION_COOKIE: "signed-cognito-token"},
+                headers={"origin": origin},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"ok": True})
+        set_ignored.assert_called_once_with("job-1")
 
     def test_admin_can_start_async_scan(self):
         claims = {

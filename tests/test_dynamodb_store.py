@@ -100,7 +100,7 @@ class DynamoDBStoreTests(unittest.TestCase):
         self.env.stop()
         self.aws_mock.stop()
 
-    def test_job_lifecycle_and_repost(self):
+    def test_timestamp_change_does_not_resurface_hidden_job(self):
         original = job_payload(
             date_found="2026-08-01T12:00:00+00:00",
             ats_updated_at="2026-07-15T10:00:00+00:00",
@@ -114,16 +114,81 @@ class DynamoDBStoreTests(unittest.TestCase):
             date_found="2026-09-01T12:00:00+00:00",
             ats_updated_at="2026-08-31T10:00:00+00:00",
         )
-        self.assertTrue(dynamodb_store.upsert_job(refreshed))
-        resurfaced = dynamodb_store.get_all_jobs()[0]
-        self.assertEqual(resurfaced["hidden"], 0)
-        self.assertEqual(resurfaced["date_found"], refreshed["date_found"])
-        self.assertEqual(resurfaced["date_posted"], refreshed["ats_updated_at"])
+        self.assertFalse(dynamodb_store.upsert_job(refreshed))
+        stored = dynamodb_store.get_all_jobs()[0]
+        self.assertEqual(stored["hidden"], 1)
+        self.assertEqual(stored["date_found"], original["date_found"])
+        self.assertEqual(stored["ats_updated_at"], refreshed["ats_updated_at"])
+
+    def test_job_is_removed_after_24_hours_absent_and_repost_is_new(self):
+        original = job_payload()
+        self.assertTrue(dynamodb_store.upsert_job(original))
+        original_id = dynamodb_store.get_all_jobs()[0]["id"]
+
+        with patch.object(
+            dynamodb_store,
+            "_utc_now",
+            return_value="2026-09-02T12:00:00+00:00",
+        ):
+            self.assertEqual(dynamodb_store.reconcile_company_jobs("Acme", []), 0)
+        with patch.object(
+            dynamodb_store,
+            "_utc_now",
+            return_value="2026-09-03T11:59:59+00:00",
+        ):
+            self.assertEqual(dynamodb_store.reconcile_company_jobs("Acme", []), 0)
+        with patch.object(
+            dynamodb_store,
+            "_utc_now",
+            return_value="2026-09-03T12:00:00+00:00",
+        ):
+            self.assertEqual(dynamodb_store.reconcile_company_jobs("Acme", []), 1)
+
+        reposted = job_payload(date_found="2026-09-04T12:00:00+00:00")
+        self.assertTrue(dynamodb_store.upsert_job(reposted))
+        self.assertEqual(dynamodb_store.get_all_jobs()[0]["id"], original_id)
+
+    def test_permanently_ignored_job_is_retained_and_never_listed(self):
+        original = job_payload()
+        dynamodb_store.upsert_job(original)
+        job_id = dynamodb_store.get_all_jobs()[0]["id"]
+        dynamodb_store.set_ignored_permanently(job_id)
+
+        self.assertEqual(
+            dynamodb_store.list_jobs(show_hidden=False, max_age_days=0), []
+        )
+        self.assertEqual(
+            dynamodb_store.list_jobs(show_hidden=True, max_age_days=0), []
+        )
+        self.assertEqual(dynamodb_store.get_all_jobs(), [])
+        with patch.object(
+            dynamodb_store,
+            "_utc_now",
+            return_value="2026-10-01T12:00:00+00:00",
+        ):
+            self.assertEqual(dynamodb_store.reconcile_company_jobs("Acme", []), 0)
+        self.assertFalse(dynamodb_store.upsert_job(original))
+
+        stored = dynamodb_store._jobs_table().get_item(
+            Key={"job_key": job_id}, ConsistentRead=True
+        )["Item"]
+        self.assertEqual(stored["ignored_permanently"], 1)
+        self.assertEqual(stored["hidden"], 1)
 
     def test_reconciliation_is_company_scoped(self):
         dynamodb_store.upsert_job(job_payload(company="Acme"))
         dynamodb_store.upsert_job(job_payload(company="Beta"))
-        for _ in range(3):
+        with patch.object(
+            dynamodb_store,
+            "_utc_now",
+            return_value="2026-09-02T12:00:00+00:00",
+        ):
+            dynamodb_store.reconcile_company_jobs("Acme", [])
+        with patch.object(
+            dynamodb_store,
+            "_utc_now",
+            return_value="2026-09-03T12:00:00+00:00",
+        ):
             dynamodb_store.reconcile_company_jobs("Acme", [])
 
         jobs = dynamodb_store.get_all_jobs()
