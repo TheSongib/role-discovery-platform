@@ -763,19 +763,21 @@ export default function App() {
 
       <main className="relative mx-auto max-w-7xl space-y-6 px-6 py-8 sm:py-10">
 
-        <ScanStatusPanel scan={latestScan} />
+        {view !== 'applied' && <ScanStatusPanel scan={latestScan} />}
 
         {/* ── Stat cards ── */}
-        {!loading && !error && (
+        {view === 'applied' && !appliedLoading && !appliedError && (
+          <div className="grid grid-cols-2 gap-4">
+            <StatCard label="Applied All Time" value={appliedJobs.length} />
+            <StatCard label="Applied This Week" value={appliedThisWeek} />
+          </div>
+        )}
+        {view !== 'applied' && !loading && !error && (
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             <StatCard label="Total Roles"  value={visible.length} />
-            {auth.can_manage
-              ? <StatCard label="Applied All Time" value={appliedLoading ? '…' : appliedError ? '—' : appliedJobs.length} />
-              : <StatCard label="Companies" value={[...new Set(visible.map(j => j.company))].length} />}
+            <StatCard label="Companies" value={[...new Set(visible.map(j => j.company))].length} />
             <StatCard label="Last Scan"    value={lastScan ? relativeDate(lastScan) : '—'} />
-            {auth.can_manage
-              ? <StatCard label="Applied This Week" value={appliedLoading ? '…' : appliedError ? '—' : appliedThisWeek} />
-              : <StatCard label="Posted Today" value={visible.filter(j => isPostedToday(j.date_posted)).length} />}
+            <StatCard label="Posted Today" value={visible.filter(j => isPostedToday(j.date_posted)).length} />
           </div>
         )}
 
