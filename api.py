@@ -30,7 +30,7 @@ from db import (
     set_ignored_permanently,
     upsert_job,
 )
-from analytics import discovery_day, discovery_series
+from analytics import BASELINE_DAY, discovery_day, discovery_series
 from config import COMPANIES
 from scraper import scrape_company
 from keywords_store import get_keywords, save_keywords
@@ -355,6 +355,7 @@ def role_analytics(days: int = Query(default=90, ge=0, le=3650)):
     init_db()
     return {
         "timezone": "America/New_York",
+        "baseline_date": BASELINE_DAY.isoformat(),
         "series": discovery_series(list_discovery_runs(), days),
     }
 

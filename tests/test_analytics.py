@@ -48,6 +48,36 @@ class DiscoverySeriesTests(unittest.TestCase):
             [{"date": "2026-10-16", "count": 0}, {"date": "2026-10-17", "count": 1}],
         )
 
+    def test_initial_inventory_is_excluded_without_changing_later_days(self):
+        runs = [
+            {"started_at": "2026-09-17T12:00:00+00:00", "new_jobs": 145},
+            {"started_at": "2026-09-18T12:00:00+00:00", "new_jobs": 5},
+        ]
+        self.assertEqual(
+            discovery_series(runs, 3, today=date(2026, 9, 19)),
+            [
+                {"date": "2026-09-17", "count": None, "excluded": True},
+                {"date": "2026-09-18", "count": 5},
+                {"date": "2026-09-19", "count": 0},
+            ],
+        )
+        self.assertEqual(
+            discovery_series(runs, 0, today=date(2026, 9, 19)),
+            [{"date": "2026-09-18", "count": 5}, {"date": "2026-09-19", "count": 0}],
+        )
+        self.assertEqual(
+            discovery_series(
+                [{
+                    "started_at": "2026-09-18T03:59:00+00:00",
+                    "new_jobs": 1,
+                    "daily_counts": {"2026-09-18": 1},
+                }],
+                0,
+                today=date(2026, 9, 18),
+            ),
+            [{"date": "2026-09-18", "count": 1}],
+        )
+
 
 class DiscoveryHistoryTests(unittest.TestCase):
     def test_completed_scan_count_remains_after_role_is_removed(self):

@@ -250,6 +250,9 @@ the first analytics request copies retained scan summaries (normally up to 90
 days old) into durable analytics records; subsequent scans write those records
 directly. History already expired before that first request cannot be recovered.
 Older scan summaries without per-role discovery dates use the scan start date.
+The September 17, 2026 initial inventory is excluded from the trend and
+summary metrics. Its scan records remain stored; a gap marks that date in
+fixed-range charts.
 
 ## Scan status
 
