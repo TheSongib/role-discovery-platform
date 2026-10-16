@@ -100,6 +100,7 @@ class RunScanTests(unittest.TestCase):
             "title": "Software Engineer",
             "company": "Airbnb",
             "url": "https://example.com/airbnb-job",
+            "date_found": "2026-08-17T12:00:00+00:00",
         }
         airbnb_jobs = ScrapeResult(
             [airbnb_job],
@@ -141,6 +142,7 @@ class RunScanTests(unittest.TestCase):
             not_remote=6,
             keyword_filtered=3,
             new_jobs=1,
+            daily_counts={"2026-08-17": 1},
         )
         self.assertEqual(result, {
             "scan_id": 42,

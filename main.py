@@ -10,8 +10,10 @@ Usage:
   python main.py --list                 # print all stored jobs to terminal
 """
 import argparse
+from collections import Counter
 from datetime import datetime, timezone
 
+from analytics import discovery_day
 from config import COMPANIES
 from db import (
     create_scan_run,
@@ -36,6 +38,7 @@ def cmd_scrape(export_fmt: str | None):
     total_keyword_filtered = 0
     successful_companies = 0
     failed_companies = 0
+    daily_counts = Counter()
 
     for company in COMPANIES:
         company_started_at = datetime.now(timezone.utc).isoformat()
@@ -48,6 +51,8 @@ def cmd_scrape(export_fmt: str | None):
             for job in jobs:
                 if upsert_job(job):
                     new_count += 1
+                    total_new += 1
+                    daily_counts[discovery_day(job.get("date_found") or datetime.now(timezone.utc).isoformat())] += 1
                     print(f"    + {job['title']}  |  {job['location']}")
             removed_count = reconcile_company_jobs(company["name"], jobs)
         except Exception as exc:
@@ -77,7 +82,6 @@ def cmd_scrape(export_fmt: str | None):
             f"{len(jobs)} matching, {new_count} new, {skipped} already stored, "
             f"{removed_count} closed."
         )
-        total_new += new_count
         total_found += company_found
         total_seen += len(jobs)
         total_not_remote += company_not_remote
@@ -114,6 +118,7 @@ def cmd_scrape(export_fmt: str | None):
         not_remote=total_not_remote,
         keyword_filtered=total_keyword_filtered,
         new_jobs=total_new,
+        daily_counts=dict(daily_counts),
     )
 
     print(

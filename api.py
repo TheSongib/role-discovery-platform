@@ -2,6 +2,7 @@ import asyncio
 import hmac
 import os
 import uuid
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -17,6 +18,7 @@ from db import (
     create_scan_run,
     finish_scan_run,
     get_latest_scan,
+    list_discovery_runs,
     init_db,
     list_applied_jobs as query_applied_jobs,
     list_jobs as query_jobs,
@@ -28,6 +30,7 @@ from db import (
     set_ignored_permanently,
     upsert_job,
 )
+from analytics import BASELINE_DAY, discovery_day, discovery_series
 from config import COMPANIES
 from scraper import scrape_company
 from keywords_store import get_keywords, save_keywords
@@ -233,6 +236,7 @@ def _run_scan_unlocked(trigger: str = "manual") -> dict:
     successful_companies = 0
     failed_companies = 0
     new_jobs = []
+    daily_counts = Counter()
     for company in COMPANIES:
         company_started_at = datetime.now(timezone.utc).isoformat()
         company_new = 0
@@ -246,6 +250,7 @@ def _run_scan_unlocked(trigger: str = "manual") -> dict:
                     total_new += 1
                     company_new += 1
                     new_jobs.append(job)
+                    daily_counts[discovery_day(job.get("date_found") or datetime.now(timezone.utc).isoformat())] += 1
             removed_jobs = reconcile_company_jobs(company["name"], jobs)
             if removed_jobs:
                 print(
@@ -307,6 +312,7 @@ def _run_scan_unlocked(trigger: str = "manual") -> dict:
         not_remote=total_not_remote,
         keyword_filtered=total_keyword_filtered,
         new_jobs=total_new,
+        daily_counts=dict(daily_counts),
     )
     if new_jobs:
         _notify(new_jobs)
@@ -341,6 +347,17 @@ def run_scan(
 def latest_scan():
     init_db()
     return get_latest_scan()
+
+
+@app.get("/api/analytics/roles")
+def role_analytics(days: int = Query(default=90, ge=0, le=3650)):
+    """Daily first appearances in the public role feed, in Eastern time."""
+    init_db()
+    return {
+        "timezone": "America/New_York",
+        "baseline_date": BASELINE_DAY.isoformat(),
+        "series": discovery_series(list_discovery_runs(), days),
+    }
 
 
 class HidePayload(BaseModel):

@@ -515,28 +515,81 @@ def finish_scan_run(
     not_remote: int,
     keyword_filtered: int,
     new_jobs: int,
+    daily_counts: dict[str, int] | None = None,
 ) -> None:
+    # This record has no TTL. Scan details expire after 90 days, but the
+    # discovery history must remain available after a posting disappears.
+    analytics_item = {
+        "pk": "ANALYTICS_RUNS",
+        "sk": scan_id,
+        "started_at": scan_id.split("#", 1)[0],
+        "new_jobs": new_jobs,
+    }
+    if daily_counts is not None:
+        analytics_item["daily_counts"] = daily_counts
+    _state_table().put_item(Item=analytics_item)
+    update_expression = (
+        "SET #status = :status, finished_at = :finished_at, "
+        "successful_companies = :successful, failed_companies = :failed, "
+        "total_found = :found, total_seen = :seen, not_remote = :remote, "
+        "keyword_filtered = :filtered, new_jobs = :new_jobs"
+    )
+    values = {
+        ":status": status,
+        ":finished_at": _utc_now(),
+        ":successful": successful_companies,
+        ":failed": failed_companies,
+        ":found": total_found,
+        ":seen": total_seen,
+        ":remote": not_remote,
+        ":filtered": keyword_filtered,
+        ":new_jobs": new_jobs,
+    }
+    if daily_counts is not None:
+        update_expression += ", daily_counts = :daily_counts"
+        values[":daily_counts"] = daily_counts
     _state_table().update_item(
         Key={"pk": "SCANS", "sk": scan_id},
-        UpdateExpression=(
-            "SET #status = :status, finished_at = :finished_at, "
-            "successful_companies = :successful, failed_companies = :failed, "
-            "total_found = :found, total_seen = :seen, not_remote = :remote, "
-            "keyword_filtered = :filtered, new_jobs = :new_jobs"
-        ),
+        UpdateExpression=update_expression,
         ExpressionAttributeNames={"#status": "status"},
-        ExpressionAttributeValues={
-            ":status": status,
-            ":finished_at": _utc_now(),
-            ":successful": successful_companies,
-            ":failed": failed_companies,
-            ":found": total_found,
-            ":seen": total_seen,
-            ":remote": not_remote,
-            ":filtered": keyword_filtered,
-            ":new_jobs": new_jobs,
-        },
+        ExpressionAttributeValues=values,
     )
+
+
+def list_discovery_runs() -> list[dict]:
+    table = _state_table()
+    marker_key = {"pk": "ANALYTICS_META", "sk": "SCAN_BACKFILL_V1"}
+    if not table.get_item(Key=marker_key, ConsistentRead=True).get("Item"):
+        # Copy retained scan summaries once. Their TTL would otherwise erase
+        # historical counts, including postings already removed from jobs.
+        previous = _query_all(
+            table,
+            KeyConditionExpression=Key("pk").eq("SCANS"),
+            ConsistentRead=True,
+        )
+        with table.batch_writer(overwrite_by_pkeys=["pk", "sk"]) as batch:
+            for run in previous:
+                if run.get("status") == "running" or not run.get("started_at"):
+                    continue
+                item = {
+                    "pk": "ANALYTICS_RUNS",
+                    "sk": run["sk"],
+                    "started_at": run["started_at"],
+                    "new_jobs": int(run.get("new_jobs") or 0),
+                }
+                if run.get("daily_counts") is not None:
+                    item["daily_counts"] = run["daily_counts"]
+                batch.put_item(Item=item)
+        table.put_item(Item={**marker_key, "backfilled_at": _utc_now()})
+
+    return [
+        _native(item)
+        for item in _query_all(
+            table,
+            KeyConditionExpression=Key("pk").eq("ANALYTICS_RUNS"),
+            ConsistentRead=True,
+        )
+    ]
 
 
 def get_latest_scan() -> dict | None:
