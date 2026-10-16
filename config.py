@@ -217,13 +217,6 @@ COMPANIES = [
         "board_id": "figma",
     },
     {
-        "name": "HubSpot",
-        "brand_color": "#FF7A59",
-        "careers_url": "https://www.hubspot.com/careers/jobs",
-        "ats": "greenhouse",
-        "board_id": "hubspotjobs",
-    },
-    {
         "name": "Abnormal Security",
         "brand_color": "#8B5CF6",
         "careers_url": "https://abnormalsecurity.com/about/careers",
