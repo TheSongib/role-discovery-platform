@@ -120,6 +120,49 @@ class DynamoDBStoreTests(unittest.TestCase):
         self.assertEqual(stored["date_found"], original["date_found"])
         self.assertEqual(stored["ats_updated_at"], refreshed["ats_updated_at"])
 
+    def test_applied_job_stays_out_of_feed_and_survives_absence(self):
+        original = job_payload()
+        dynamodb_store.upsert_job(original)
+        job_id = dynamodb_store.get_all_jobs()[0]["id"]
+        with patch.object(
+            dynamodb_store, "_utc_now", return_value="2026-09-02T12:00:00+00:00"
+        ):
+            applied_at = dynamodb_store.set_applied(job_id, True)
+        self.assertEqual(applied_at, "2026-09-02T12:00:00+00:00")
+        self.assertEqual(dynamodb_store.list_jobs(show_hidden=True, max_age_days=0), [])
+        self.assertEqual(
+            [job["id"] for job in dynamodb_store.list_applied_jobs()], [job_id]
+        )
+        self.assertEqual(dynamodb_store.set_applied(job_id, True), applied_at)
+        self.assertFalse(dynamodb_store.upsert_job(original))
+        self.assertEqual(dynamodb_store.list_applied_jobs()[0]["applied_at"], applied_at)
+
+        with patch.object(
+            dynamodb_store, "_utc_now", return_value="2026-10-01T12:00:00+00:00"
+        ):
+            self.assertEqual(dynamodb_store.reconcile_company_jobs("Acme", []), 0)
+            self.assertEqual(dynamodb_store.reconcile_company_jobs("Acme", []), 0)
+        self.assertEqual(dynamodb_store.list_applied_jobs()[0]["applied_at"], applied_at)
+
+        dynamodb_store.set_applied(job_id, False)
+        self.assertEqual(dynamodb_store.list_applied_jobs(), [])
+        self.assertEqual(
+            [job["id"] for job in dynamodb_store.list_jobs(max_age_days=0)],
+            [job_id],
+        )
+
+    def test_applied_transition_updates_the_recent_feed_index(self):
+        current = job_payload(date_found=dynamodb_store._utc_now())
+        dynamodb_store.upsert_job(current)
+        job_id = dynamodb_store.list_jobs()[0]["id"]
+
+        dynamodb_store.set_applied(job_id, True)
+        self.assertEqual(dynamodb_store.list_jobs(show_hidden=True), [])
+        self.assertEqual(dynamodb_store.list_applied_jobs()[0]["id"], job_id)
+
+        dynamodb_store.set_applied(job_id, False)
+        self.assertEqual([job["id"] for job in dynamodb_store.list_jobs()], [job_id])
+
     def test_job_is_removed_after_24_hours_absent_and_repost_is_new(self):
         original = job_payload()
         self.assertTrue(dynamodb_store.upsert_job(original))
@@ -287,6 +330,7 @@ class DynamoDBStoreTests(unittest.TestCase):
                     ),
                 )
                 connection.commit()
+            connection.close()
 
             argv = [
                 "migrate_sqlite_to_dynamodb.py",

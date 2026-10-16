@@ -14,7 +14,7 @@ workloads are stateless.
 - Removes jobs only after successful company scans have not found them for 24 hours
 - Records every scan and each company's success or failure so broken sources are visible
 - Scans every 15 minutes on weekdays from 7 AM to 8 PM Eastern and hourly at all other times
-- Serves a React frontend with live data, a one-click scan button, and the ability to hide jobs you've already applied to or aren't interested in
+- Serves a React frontend with live data, a one-click scan button, and separate hidden and applied job views
 
 ## Companies tracked
 
@@ -217,6 +217,7 @@ this automatically. Key fields are consistent across both backends:
 | `date_posted` | When the company posted the job (if available) |
 | `ats_updated_at` | Latest ATS update timestamp retained as metadata (when available) |
 | `hidden` | Set to 1 when hidden from the UI |
+| `applied_at` | UTC time a role was marked applied; keeps the role in the applied view and out of the active and hidden feeds |
 | `ignored_permanently` | Set to 1 when an administrator permanently suppresses the posting |
 
 `jobs.db` is local only—do not commit it to git. The AWS tables use on-demand
@@ -232,8 +233,10 @@ a fresh `date_found` value and is treated as a new posting.
 
 ATS update timestamps are retained as metadata but do not resurface hidden jobs,
 because many applicant-tracking systems advance those timestamps without a new
-opening. Permanently ignored postings remain in storage, are excluded from both
-active and hidden dashboard views, and are never removed or resurfaced.
+opening. Applied postings also stay in storage after they disappear from a
+company feed, so the applied view and its all-time and weekly counts remain
+available. Permanently ignored postings remain in storage, are excluded from
+the active, hidden, and applied views, and are never removed or resurfaced.
 
 ## Scan status
 

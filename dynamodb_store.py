@@ -36,6 +36,7 @@ _JOB_FIELDS = (
     "last_seen",
     "source_url",
     "hidden",
+    "applied_at",
     "missed_scans",
     "missing_since",
     "ignored_permanently",
@@ -105,9 +106,11 @@ def _job_key(job: Mapping[str, Any]) -> str:
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
 
-def _feed_keys(date_found: str, hidden: bool, job_key: str) -> tuple[str, str]:
+def _feed_keys(
+    date_found: str, hidden: bool, job_key: str, applied_at: str | None = None
+) -> tuple[str, str]:
     bucket = date_found[:7] if len(date_found) >= 7 else "unknown"
-    visibility = "HIDDEN" if hidden else "VISIBLE"
+    visibility = "APPLIED" if applied_at else "HIDDEN" if hidden else "VISIBLE"
     return f"{visibility}#{bucket}", f"{date_found}#{job_key}"
 
 
@@ -116,7 +119,8 @@ def build_job_item(job: Mapping[str, Any]) -> dict[str, Any]:
     key = _job_key(job)
     date_found = str(job["date_found"])
     hidden = bool(job.get("hidden", 0))
-    feed_bucket, feed_sort = _feed_keys(date_found, hidden, key)
+    applied_at = job.get("applied_at")
+    feed_bucket, feed_sort = _feed_keys(date_found, hidden, key, applied_at)
     item = {field: job.get(field) for field in _JOB_FIELDS}
     item.update(
         {
@@ -137,6 +141,8 @@ def build_job_item(job: Mapping[str, Any]) -> dict[str, Any]:
     )
     if not job.get("missing_since"):
         item.pop("missing_since", None)
+    if not applied_at:
+        item.pop("applied_at", None)
     return item
 
 
@@ -244,7 +250,7 @@ def reconcile_company_jobs(company: str, seen_jobs: list[dict]) -> int:
             )
             continue
 
-        if stored_job.get("ignored_permanently"):
+        if stored_job.get("ignored_permanently") or stored_job.get("applied_at"):
             continue
 
         missed_scans = int(stored_job.get("missed_scans", 0)) + 1
@@ -310,6 +316,7 @@ def list_jobs(show_hidden: bool = False, max_age_days: int = 3) -> list[dict]:
         _public_job(item)
         for item in items
         if not bool(item.get("ignored_permanently", 0))
+        and not item.get("applied_at")
         and (show_hidden or not bool(item.get("hidden", 0)))
     ]
     public_jobs.sort(
@@ -319,13 +326,31 @@ def list_jobs(show_hidden: bool = False, max_age_days: int = 3) -> list[dict]:
     return public_jobs
 
 
+def list_applied_jobs() -> list[dict]:
+    jobs = [
+        _public_job(item)
+        for item in _scan_all(_jobs_table())
+        if item.get("applied_at") and not bool(item.get("ignored_permanently", 0))
+    ]
+    jobs.sort(key=lambda job: job["applied_at"], reverse=True)
+    return jobs
+
+
 def get_all_jobs(
     remote_only: bool = False,
     max_age_days: int | None = None,
 ) -> list[dict]:
-    jobs = list_jobs(show_hidden=True, max_age_days=max_age_days or 0)
+    jobs = [
+        _public_job(item)
+        for item in _scan_all(_jobs_table())
+        if not bool(item.get("ignored_permanently", 0))
+    ]
+    if max_age_days is not None and max_age_days > 0:
+        cutoff = (datetime.now(timezone.utc).date() - timedelta(days=max_age_days)).isoformat()
+        jobs = [job for job in jobs if job.get("date_found", "") >= cutoff]
     if remote_only:
         jobs = [job for job in jobs if bool(job.get("is_remote"))]
+    jobs.sort(key=lambda job: job.get("date_found") or "", reverse=True)
     return jobs
 
 
@@ -341,7 +366,8 @@ def set_hidden(job_id: str, hidden: bool) -> None:
     table.update_item(
         Key={"job_key": str(job_id)},
         UpdateExpression=(
-            "SET #hidden = :hidden, feed_bucket = :bucket, feed_sort = :sort"
+            "SET #hidden = :hidden, feed_bucket = :bucket, feed_sort = :sort "
+            "REMOVE applied_at"
         ),
         ExpressionAttributeNames={"#hidden": "hidden"},
         ExpressionAttributeValues={
@@ -350,6 +376,37 @@ def set_hidden(job_id: str, hidden: bool) -> None:
             ":sort": feed_sort,
         },
     )
+
+
+def set_applied(job_id: str, applied: bool) -> str | None:
+    table = _jobs_table()
+    existing = table.get_item(
+        Key={"job_key": str(job_id)}, ConsistentRead=True
+    ).get("Item")
+    if not existing:
+        return None
+    if applied and existing.get("applied_at"):
+        return str(existing["applied_at"])
+    applied_at = _utc_now() if applied else None
+    feed_bucket, feed_sort = _feed_keys(
+        str(existing["date_found"]), False, str(job_id), applied_at
+    )
+    expression = (
+        "SET #hidden = :zero, feed_bucket = :bucket, feed_sort = :sort"
+    )
+    values = {":zero": 0, ":bucket": feed_bucket, ":sort": feed_sort}
+    if applied:
+        expression += ", applied_at = :applied_at"
+        values[":applied_at"] = applied_at
+    else:
+        expression += " REMOVE applied_at"
+    table.update_item(
+        Key={"job_key": str(job_id)},
+        UpdateExpression=expression,
+        ExpressionAttributeNames={"#hidden": "hidden"},
+        ExpressionAttributeValues=values,
+    )
+    return applied_at
 
 
 def set_ignored_permanently(job_id: str) -> None:

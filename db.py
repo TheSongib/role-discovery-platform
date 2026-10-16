@@ -70,6 +70,7 @@ def init_db():
         for sql in [
             "ALTER TABLE jobs ADD COLUMN last_seen TEXT",
             "ALTER TABLE jobs ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE jobs ADD COLUMN applied_at TEXT",
             "ALTER TABLE jobs ADD COLUMN missed_scans INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE jobs ADD COLUMN ats_updated_at TEXT",
             "ALTER TABLE jobs ADD COLUMN missing_since TEXT",
@@ -399,7 +400,7 @@ def reconcile_company_jobs(company: str, seen_jobs: list[dict]) -> int:
         stored_jobs = conn.execute(
             """
             SELECT id, title, url, missed_scans, missing_since,
-                   ignored_permanently
+                   ignored_permanently, applied_at
             FROM jobs
             WHERE company = ?
             """,
@@ -417,7 +418,7 @@ def reconcile_company_jobs(company: str, seen_jobs: list[dict]) -> int:
                 continue
 
             missed_scans = stored_job["missed_scans"] + 1
-            if stored_job["ignored_permanently"]:
+            if stored_job["ignored_permanently"] or stored_job["applied_at"]:
                 continue
 
             missing_since = _parse_datetime(stored_job["missing_since"])
@@ -494,6 +495,7 @@ def list_jobs(show_hidden: bool = False, max_age_days: int = 3) -> list[dict]:
     conditions = []
     conditions.append("ignored_permanently = 0")
     parameters = []
+    conditions.append("applied_at IS NULL")
     if not show_hidden:
         conditions.append("hidden = 0")
     if max_age_days > 0:
@@ -509,15 +511,43 @@ def list_jobs(show_hidden: bool = False, max_age_days: int = 3) -> list[dict]:
         return [dict(row) for row in conn.execute(query, parameters).fetchall()]
 
 
+def list_applied_jobs() -> list[dict]:
+    """Return every applied job, regardless of when the posting was found."""
+    if _uses_dynamodb():
+        return _dynamo().list_applied_jobs()
+    if not DB_PATH.exists():
+        return []
+    with get_conn() as conn:
+        return [
+            dict(row) for row in conn.execute(
+                "SELECT * FROM jobs WHERE applied_at IS NOT NULL "
+                "AND ignored_permanently = 0 ORDER BY applied_at DESC"
+            ).fetchall()
+        ]
+
+
 def set_hidden(job_id: int | str, hidden: bool):
     if _uses_dynamodb():
         return _dynamo().set_hidden(str(job_id), hidden)
     with get_conn() as conn:
         conn.execute(
-            "UPDATE jobs SET hidden = ? WHERE id = ?",
+            "UPDATE jobs SET hidden = ?, applied_at = NULL WHERE id = ?",
             (int(hidden), int(job_id)),
         )
         conn.commit()
+
+
+def set_applied(job_id: int | str, applied: bool) -> str | None:
+    if _uses_dynamodb():
+        return _dynamo().set_applied(str(job_id), applied)
+    with get_conn() as conn:
+        applied_at = _utc_now() if applied else None
+        conn.execute(
+            "UPDATE jobs SET applied_at = ?, hidden = 0 WHERE id = ?",
+            (applied_at, int(job_id)),
+        )
+        conn.commit()
+        return applied_at
 
 
 def set_ignored_permanently(job_id: int | str):

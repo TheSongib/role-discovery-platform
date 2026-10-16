@@ -7,7 +7,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import requests
-from fastapi import BackgroundTasks, Depends, FastAPI, Query, Request, Response, status
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -18,10 +18,12 @@ from db import (
     finish_scan_run,
     get_latest_scan,
     init_db,
+    list_applied_jobs as query_applied_jobs,
     list_jobs as query_jobs,
     reconcile_company_jobs,
     record_company_scan_result,
     release_scan_lock,
+    set_applied,
     set_hidden,
     set_ignored_permanently,
     upsert_job,
@@ -159,6 +161,23 @@ def list_jobs(
             "company_color": company_colors.get(job.get("company"), "#94A3B8"),
         }
         for job in jobs
+    ]
+
+
+@app.get("/api/jobs/applied")
+def applied_jobs(_admin: dict = Depends(require_admin)):
+    init_db()
+    company_colors = {
+        company["name"]: company["brand_color"]
+        for company in COMPANIES
+        if company.get("brand_color")
+    }
+    return [
+        {
+            **job,
+            "company_color": company_colors.get(job.get("company"), "#94A3B8"),
+        }
+        for job in query_applied_jobs()
     ]
 
 
@@ -328,6 +347,10 @@ class HidePayload(BaseModel):
     hidden: bool
 
 
+class AppliedPayload(BaseModel):
+    applied: bool
+
+
 @app.patch("/api/jobs/{job_id}")
 def patch_job(
     job_id: str,
@@ -337,6 +360,19 @@ def patch_job(
     init_db()
     set_hidden(job_id, payload.hidden)
     return {"ok": True}
+
+
+@app.patch("/api/jobs/{job_id}/applied")
+def patch_applied_job(
+    job_id: str,
+    payload: AppliedPayload,
+    _admin: dict = Depends(require_admin),
+):
+    init_db()
+    applied_at = set_applied(job_id, payload.applied)
+    if payload.applied and applied_at is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"ok": True, "applied_at": applied_at}
 
 
 @app.post("/api/jobs/{job_id}/ignore")
