@@ -142,6 +142,7 @@ class ScanStatusPersistenceTests(unittest.TestCase):
                     )
                     """
                 )
+            conn.close()
 
             with patch.object(db, "DB_PATH", database_path):
                 db.init_db()

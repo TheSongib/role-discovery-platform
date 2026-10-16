@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 
@@ -60,7 +61,7 @@ def main() -> None:
             f"expected {args.confirm_account}"
         )
 
-    with sqlite3.connect(args.sqlite) as connection:
+    with closing(sqlite3.connect(args.sqlite)) as connection:
         connection.row_factory = sqlite3.Row
         jobs = _rows(connection, "jobs")
         scan_runs = _rows(connection, "scan_runs")

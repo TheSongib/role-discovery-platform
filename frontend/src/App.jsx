@@ -42,6 +42,13 @@ function shortDate(isoStr) {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+function appliedDate(isoStr) {
+  if (!isoStr) return '—'
+  return new Date(isoStr).toLocaleDateString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric',
+  })
+}
+
 // ── Small components ─────────────────────────────────────────────────────────
 function StatCard({ label, value }) {
   return (
@@ -64,10 +71,10 @@ function CompanyBadge({ company, color }) {
   )
 }
 
-function SkeletonRow({ canManage }) {
+function SkeletonRow({ canManage, appliedView = false }) {
   return (
     <tr className="animate-pulse border-b border-white/[0.05]">
-      {[72, 220, 110, 150, 70, 90, ...(canManage ? [32] : [])].map((w, i) => (
+      {[72, 220, 110, 150, 70, 90, ...(appliedView ? [90] : []), ...(canManage ? [32] : [])].map((w, i) => (
         <td key={i} className="px-5 py-4">
           <div className="h-3.5 rounded bg-slate-800" style={{ width: w }} />
         </td>
@@ -76,7 +83,7 @@ function SkeletonRow({ canManage }) {
   )
 }
 
-function EmptyState({ canManage, columnCount }) {
+function EmptyState({ canManage, columnCount, view }) {
   return (
     <tr>
       <td colSpan={columnCount} className="px-6 py-24 text-center">
@@ -86,9 +93,11 @@ function EmptyState({ canManage, columnCount }) {
               d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
           </svg>
         </div>
-        <p className="text-base font-semibold text-slate-200">No listings yet</p>
+        <p className="text-base font-semibold text-slate-200">
+          {view === 'applied' ? 'No applied roles yet' : view === 'hidden' ? 'No hidden listings' : 'No listings yet'}
+        </p>
         <p className="mt-1 text-sm text-slate-500">
-          {canManage
+          {view === 'applied' ? 'Mark a role as applied to track it here.' : view === 'hidden' ? 'Hidden roles will appear here.' : canManage
             ? <>Run <code className="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-xs text-slate-300">Scan Now</code> to pull jobs</>
             : 'Scheduled scans will populate this dashboard.'}
         </p>
@@ -309,6 +318,14 @@ function XIcon() {
   )
 }
 
+function CheckIcon() {
+  return (
+    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12l4 4L19 6" />
+    </svg>
+  )
+}
+
 function ScanStatusPanel({ scan }) {
   const [expanded, setExpanded] = useState(false)
 
@@ -403,9 +420,12 @@ function ScanStatusPanel({ scan }) {
 // ── Main app ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [jobs, setJobs]             = useState([])
+  const [appliedJobs, setAppliedJobs] = useState([])
+  const [appliedLoading, setAppliedLoading] = useState(false)
+  const [appliedError, setAppliedError] = useState(null)
   const [loading, setLoading]       = useState(true)
   const [error, setError]           = useState(null)
-  const [showHidden, setShowHidden] = useState(false)
+  const [view, setView]             = useState('active')
   const [scanning, setScanning]     = useState(false)
   const [scanResult, setScanResult] = useState(null) // { new_jobs, total_seen }
   const [maxAge, setMaxAge]         = useState(3)
@@ -426,7 +446,10 @@ export default function App() {
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
       .then(data => {
         setAuth(data)
-        if (!data.can_manage) setShowHidden(false)
+        if (!data.can_manage) {
+          setView('active')
+          setAppliedJobs([])
+        }
       })
       .catch(() => setAuth({ enabled: false, authenticated: false, can_manage: false, email: null }))
       .finally(() => setAuthLoaded(true))
@@ -441,11 +464,25 @@ export default function App() {
       .catch(e  => { setError(e.message); setLoading(false) })
   }
 
+  function loadAppliedJobs() {
+    setAppliedLoading(true)
+    setAppliedError(null)
+    return fetch('/api/jobs/applied', { cache: 'no-store' })
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
+      .then(data => setAppliedJobs(data))
+      .catch(e => setAppliedError(e.message))
+      .finally(() => setAppliedLoading(false))
+  }
+
   useEffect(() => { loadAuth() }, [])
 
   useEffect(() => {
     if (authLoaded) loadJobs(maxAge, auth.can_manage)
   }, [maxAge, auth.can_manage, authLoaded])
+
+  useEffect(() => {
+    if (authLoaded && auth.can_manage) loadAppliedJobs()
+  }, [auth.can_manage, authLoaded])
 
   function loadLatestScan() {
     return fetch('/api/scans/latest', { cache: 'no-store' })
@@ -467,6 +504,7 @@ export default function App() {
     if (isRequestedScan && latestScan.status !== 'running') {
       setScanResult(latestScan)
       loadJobs(maxAge)
+      if (auth.can_manage) loadAppliedJobs()
     }
   }, [latestScan?.status, latestScan?.started_at, scanResult?.status])
 
@@ -509,6 +547,30 @@ export default function App() {
     }
   }
 
+  async function toggleApplied(job) {
+    const nextApplied = view !== 'applied'
+    try {
+      const response = await fetch(`/api/jobs/${job.id}/applied`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ applied: nextApplied }),
+      })
+      if (response.status === 401 || response.status === 403) await loadAuth()
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const result = await response.json()
+      if (nextApplied) {
+        setJobs(prev => prev.filter(j => j.id !== job.id))
+        setAppliedJobs(prev => [{ ...job, hidden: 0, applied_at: result.applied_at }, ...prev.filter(j => j.id !== job.id)])
+      } else {
+        setAppliedJobs(prev => prev.filter(j => j.id !== job.id))
+        loadJobs(maxAge)
+      }
+    } catch {
+      loadJobs(maxAge)
+      loadAppliedJobs()
+    }
+  }
+
   async function ignorePermanently(job) {
     const confirmed = window.confirm(
       `Permanently ignore “${job.title}” at ${job.company}?\n\n` +
@@ -517,6 +579,7 @@ export default function App() {
     if (!confirmed) return
 
     setJobs(prev => prev.filter(j => j.id !== job.id))
+    setAppliedJobs(prev => prev.filter(j => j.id !== job.id))
     try {
       const response = await fetch(`/api/jobs/${job.id}/ignore`, {
         method: 'POST',
@@ -525,14 +588,21 @@ export default function App() {
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
     } catch {
       loadJobs(maxAge)
+      loadAppliedJobs()
     }
   }
 
   const visible   = jobs.filter(j => !j.hidden)
   const hidden    = jobs.filter(j =>  j.hidden)
-  const companies = [...new Set(visible.map(j => j.company))]
+  const displayedJobs = view === 'applied' ? appliedJobs : view === 'hidden' ? hidden : visible
+  const displayLoading = view === 'applied' ? appliedLoading : loading
+  const displayError = view === 'applied' ? appliedError : error
+  const weekStart = new Date()
+  weekStart.setHours(0, 0, 0, 0)
+  weekStart.setDate(weekStart.getDate() - (weekStart.getDay() + 6) % 7)
+  const appliedThisWeek = appliedJobs.filter(job => job.applied_at && new Date(job.applied_at) >= weekStart).length
   const lastScan  = latestScan?.finished_at ?? latestScan?.started_at ?? ''
-  const tableColumns = auth.can_manage ? 7 : 6
+  const tableColumns = (auth.can_manage ? 7 : 6) + (view === 'applied' ? 1 : 0)
   const scanPending = scanning || scanResult?.status === 'accepted'
 
   return (
@@ -564,16 +634,18 @@ export default function App() {
             )}
 
             {/* Age filter dropdown */}
-            <select
-              value={maxAge}
-              onChange={e => setMaxAge(Number(e.target.value))}
-              aria-label="Job age"
-              className="control-dark rounded-xl px-3 py-2 text-xs font-medium text-slate-300 outline-none focus:border-violet-400/50 focus:ring-2 focus:ring-violet-500/15"
-            >
-              {AGE_OPTIONS.map(opt => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
+            {view !== 'applied' && (
+              <select
+                value={maxAge}
+                onChange={e => setMaxAge(Number(e.target.value))}
+                aria-label="Job age"
+                className="control-dark rounded-xl px-3 py-2 text-xs font-medium text-slate-300 outline-none focus:border-violet-400/50 focus:ring-2 focus:ring-violet-500/15"
+              >
+                {AGE_OPTIONS.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            )}
 
             {/* Scan result flash */}
             {scanResult && !scanPending && (
@@ -613,15 +685,27 @@ export default function App() {
                 </button>
 
                 <button
-                  onClick={() => setShowHidden(h => !h)}
+                  onClick={() => setView(current => current === 'hidden' ? 'active' : 'hidden')}
                   className={`flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-medium transition-colors ${
-                    showHidden
+                    view === 'hidden'
                       ? 'border-violet-400/30 bg-violet-400/10 text-violet-200'
                       : 'border-white/10 bg-white/[0.035] text-slate-400 hover:border-white/20 hover:bg-white/[0.06] hover:text-slate-200'
                   }`}
                 >
-                  {showHidden ? <EyeIcon /> : <EyeSlashIcon />}
-                  {showHidden ? `Showing hidden (${hidden.length})` : `Hidden (${hidden.length})`}
+                  {view === 'hidden' ? <EyeIcon /> : <EyeSlashIcon />}
+                  {view === 'hidden' ? `Showing hidden (${hidden.length})` : `Hidden (${hidden.length})`}
+                </button>
+
+                <button
+                  onClick={() => setView(current => current === 'applied' ? 'active' : 'applied')}
+                  className={`flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-medium transition-colors ${
+                    view === 'applied'
+                      ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200'
+                      : 'border-white/10 bg-white/[0.035] text-slate-400 hover:border-white/20 hover:bg-white/[0.06] hover:text-slate-200'
+                  }`}
+                >
+                  <CheckIcon />
+                  {view === 'applied' ? `Showing applied (${appliedJobs.length})` : `Applied (${appliedJobs.length})`}
                 </button>
 
                 <button
@@ -679,13 +763,19 @@ export default function App() {
 
       <main className="relative mx-auto max-w-7xl space-y-6 px-6 py-8 sm:py-10">
 
-        <ScanStatusPanel scan={latestScan} />
+        {view !== 'applied' && <ScanStatusPanel scan={latestScan} />}
 
         {/* ── Stat cards ── */}
-        {!loading && !error && (
+        {view === 'applied' && !appliedLoading && !appliedError && (
+          <div className="grid grid-cols-2 gap-4">
+            <StatCard label="Applied All Time" value={appliedJobs.length} />
+            <StatCard label="Applied This Week" value={appliedThisWeek} />
+          </div>
+        )}
+        {view !== 'applied' && !loading && !error && (
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             <StatCard label="Total Roles"  value={visible.length} />
-            <StatCard label="Companies"    value={companies.length} />
+            <StatCard label="Companies" value={[...new Set(visible.map(j => j.company))].length} />
             <StatCard label="Last Scan"    value={lastScan ? relativeDate(lastScan) : '—'} />
             <StatCard label="Posted Today" value={visible.filter(j => isPostedToday(j.date_posted)).length} />
           </div>
@@ -697,12 +787,12 @@ export default function App() {
             <div>
               <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-violet-300/70">Opportunity feed</p>
               <h2 className="text-sm font-semibold text-slate-200">
-                {showHidden ? 'Hidden Listings' : 'Active Listings'}
+                {view === 'applied' ? 'Applied Listings' : view === 'hidden' ? 'Hidden Listings' : 'Active Listings'}
               </h2>
             </div>
-            {!loading && !error && jobs.length > 0 && (
+            {!displayLoading && !displayError && displayedJobs.length > 0 && (
               <span className="rounded-full bg-white/[0.05] px-2.5 py-1 text-xs font-medium text-slate-400 ring-1 ring-inset ring-white/[0.08]">
-                {showHidden ? hidden.length : visible.length} roles
+                {displayedJobs.length} roles
               </span>
             )}
           </div>
@@ -711,7 +801,7 @@ export default function App() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-white/[0.07] bg-white/[0.025]">
-                  {['Company', 'Title', 'Department', 'Location', 'Posted', 'Date Found', ...(auth.can_manage ? [''] : [])].map((col, i) => (
+                  {['Company', 'Title', 'Department', 'Location', 'Posted', 'Date Found', ...(view === 'applied' ? ['Applied'] : []), ...(auth.can_manage ? [''] : [])].map((col, i) => (
                     <th key={i}
                       className="px-5 py-3.5 text-left text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-600">
                       {col}
@@ -721,14 +811,14 @@ export default function App() {
               </thead>
 
               <tbody>
-                {loading ? (
-                  Array.from({ length: 10 }).map((_, i) => <SkeletonRow key={i} canManage={auth.can_manage} />)
-                ) : error ? (
-                  <ErrorState message={error} columnCount={tableColumns} />
-                ) : (showHidden ? hidden : visible).length === 0 ? (
-                  <EmptyState canManage={auth.can_manage} columnCount={tableColumns} />
+                {displayLoading ? (
+                  Array.from({ length: 10 }).map((_, i) => <SkeletonRow key={i} canManage={auth.can_manage} appliedView={view === 'applied'} />)
+                ) : displayError ? (
+                  <ErrorState message={displayError} columnCount={tableColumns} />
+                ) : displayedJobs.length === 0 ? (
+                  <EmptyState canManage={auth.can_manage} columnCount={tableColumns} view={view} />
                 ) : (
-                  (showHidden ? hidden : visible).map((job, idx) => (
+                  displayedJobs.map((job, idx) => (
                     <tr
                       key={job.id}
                       className={`group border-b border-white/[0.045] transition-colors hover:bg-violet-400/[0.045] ${
@@ -776,6 +866,12 @@ export default function App() {
                         {shortDate(job.date_found)}
                       </td>
 
+                      {view === 'applied' && (
+                        <td className="whitespace-nowrap px-5 py-3.5 text-emerald-300">
+                          {appliedDate(job.applied_at)}
+                        </td>
+                      )}
+
                       {auth.can_manage && (
                         <td className="whitespace-nowrap px-4 py-3.5">
                           <div className="flex items-center gap-1">
@@ -787,17 +883,40 @@ export default function App() {
                             >
                               <XIcon />
                             </button>
-                            <button
-                              onClick={() => toggleHidden(job)}
-                              title={job.hidden ? 'Unhide this job' : 'Hide this job'}
-                              className={`rounded-md p-1.5 transition-colors ${
-                                job.hidden
-                                  ? 'text-violet-300 hover:bg-violet-400/10 hover:text-violet-200'
-                                  : 'text-slate-600 opacity-0 group-hover:opacity-100 hover:bg-white/[0.06] hover:text-slate-300 focus:opacity-100'
-                              }`}
-                            >
-                              {job.hidden ? <EyeIcon /> : <EyeSlashIcon />}
-                            </button>
+                            {view === 'applied' ? (
+                              <button
+                                onClick={() => toggleApplied(job)}
+                                title="Move back to active listings"
+                                aria-label={`Remove applied status from ${job.title} at ${job.company}`}
+                                className="rounded-md p-1.5 text-emerald-300 transition-colors hover:bg-emerald-400/10 hover:text-emerald-200"
+                              >
+                                <CheckIcon />
+                              </button>
+                            ) : (
+                              <>
+                                {view === 'active' && (
+                                  <button
+                                    onClick={() => toggleApplied(job)}
+                                    title="Mark as applied"
+                                    aria-label={`Mark ${job.title} at ${job.company} as applied`}
+                                    className="rounded-md p-1.5 text-slate-600 opacity-0 transition-colors hover:bg-emerald-400/10 hover:text-emerald-300 focus:opacity-100 group-hover:opacity-100"
+                                  >
+                                    <CheckIcon />
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => toggleHidden(job)}
+                                  title={job.hidden ? 'Unhide this job' : 'Hide this job'}
+                                  className={`rounded-md p-1.5 transition-colors ${
+                                    job.hidden
+                                      ? 'text-violet-300 hover:bg-violet-400/10 hover:text-violet-200'
+                                      : 'text-slate-600 opacity-0 group-hover:opacity-100 hover:bg-white/[0.06] hover:text-slate-300 focus:opacity-100'
+                                  }`}
+                                >
+                                  {job.hidden ? <EyeIcon /> : <EyeSlashIcon />}
+                                </button>
+                              </>
+                            )}
                           </div>
                         </td>
                       )}

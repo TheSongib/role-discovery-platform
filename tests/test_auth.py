@@ -47,6 +47,7 @@ class AuthenticationBoundaryTests(unittest.TestCase):
         requests = (
             ("post", "/api/scan", None),
             ("patch", "/api/jobs/job-1", {"hidden": True}),
+            ("patch", "/api/jobs/job-1/applied", {"applied": True}),
             ("post", "/api/jobs/job-1/ignore", None),
             (
                 "put",
@@ -62,6 +63,37 @@ class AuthenticationBoundaryTests(unittest.TestCase):
                     headers={"origin": origin},
                 )
                 self.assertEqual(response.status_code, 401)
+
+    def test_applied_jobs_are_private_and_admin_can_mark_applied(self):
+        self.assertEqual(self.client.get("/api/jobs/applied").status_code, 401)
+        claims = {"sub": "admin-user", "cognito:groups": ["admins"]}
+        origin = "https://example.execute-api.us-east-1.amazonaws.com"
+        job = {
+            "id": "job-1",
+            "company": "Coinbase",
+            "title": "Engineer",
+            "applied_at": "2026-09-02T12:00:00+00:00",
+        }
+        with (
+            patch("auth._decode_id_token", return_value=claims),
+            patch("api.init_db"),
+            patch("api.query_applied_jobs", return_value=[job]),
+            patch("api.set_applied", return_value=job["applied_at"]) as set_applied,
+        ):
+            cookies = {auth.SESSION_COOKIE: "signed-cognito-token"}
+            listed = self.client.get("/api/jobs/applied", cookies=cookies)
+            marked = self.client.patch(
+                "/api/jobs/job-1/applied",
+                json={"applied": True},
+                cookies=cookies,
+                headers={"origin": origin},
+            )
+
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(listed.json()[0]["applied_at"], job["applied_at"])
+        self.assertEqual(listed.json()[0]["company_color"], "#0052FF")
+        self.assertEqual(marked.json()["applied_at"], job["applied_at"])
+        set_applied.assert_called_once_with("job-1", True)
 
     def test_admin_can_permanently_ignore_job(self):
         claims = {"sub": "admin-user", "cognito:groups": ["admins"]}

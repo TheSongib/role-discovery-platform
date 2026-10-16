@@ -31,6 +31,36 @@ def job_payload(
 
 
 class JobLifecycleTests(unittest.TestCase):
+    def test_applied_job_is_retained_and_can_return_to_active(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            database_path = Path(tmp_dir) / "jobs.db"
+            with patch.object(db, "DB_PATH", database_path):
+                db.init_db()
+                db.upsert_job(job_payload())
+                job_id = self._only_job()["id"]
+
+                with patch.object(db, "_utc_now", return_value="2026-09-02T12:00:00+00:00"):
+                    self.assertEqual(
+                        db.set_applied(job_id, True), "2026-09-02T12:00:00+00:00"
+                    )
+                self.assertEqual(db.list_jobs(show_hidden=True, max_age_days=0), [])
+                applied = db.list_applied_jobs()
+                self.assertEqual([job["id"] for job in applied], [job_id])
+                self.assertEqual(applied[0]["applied_at"], "2026-09-02T12:00:00+00:00")
+
+                with patch.object(db, "_utc_now", return_value="2026-10-01T12:00:00+00:00"):
+                    self.assertEqual(db.reconcile_company_jobs("Acme", []), 0)
+                    self.assertEqual(db.reconcile_company_jobs("Acme", []), 0)
+                self.assertEqual(db.list_applied_jobs()[0]["id"], job_id)
+                self.assertEqual(self._only_job()["applied_at"], applied[0]["applied_at"])
+
+                db.set_applied(job_id, False)
+                self.assertEqual(db.list_applied_jobs(), [])
+                self.assertEqual(
+                    [job["id"] for job in db.list_jobs(max_age_days=0)], [job_id]
+                )
+                self.assertIsNone(self._only_job()["applied_at"])
+
     def test_hidden_job_with_changed_ats_timestamp_stays_hidden(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             database_path = Path(tmp_dir) / "jobs.db"
@@ -203,6 +233,7 @@ class JobLifecycleTests(unittest.TestCase):
             self.assertIn("ats_updated_at", columns)
             self.assertIn("missing_since", columns)
             self.assertIn("ignored_permanently", columns)
+            self.assertIn("applied_at", columns)
             self.assertEqual(missed_scans, 0)
 
     @staticmethod
