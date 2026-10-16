@@ -18,9 +18,9 @@ class DiscoverySeriesTests(unittest.TestCase):
         self.assertEqual(
             discovery_series(runs, 3, today=date(2026, 11, 2)),
             [
-                {"date": "2026-10-31", "count": 2},
-                {"date": "2026-11-01", "count": 4},
-                {"date": "2026-11-02", "count": 0},
+                {"date": "2026-10-31", "count": 2, "average_7_day": 2.0},
+                {"date": "2026-11-01", "count": 4, "average_7_day": 3.0},
+                {"date": "2026-11-02", "count": 0, "average_7_day": 2.0},
             ],
         )
 
@@ -31,7 +31,10 @@ class DiscoverySeriesTests(unittest.TestCase):
                 0,
                 today=date(2026, 10, 2),
             ),
-            [{"date": "2026-10-01", "count": 1}, {"date": "2026-10-02", "count": 0}],
+            [
+                {"date": "2026-10-01", "count": 1, "average_7_day": 1.0},
+                {"date": "2026-10-02", "count": 0, "average_7_day": 0.5},
+            ],
         )
 
     def test_uses_role_discovery_day_when_scan_crosses_midnight(self):
@@ -45,7 +48,10 @@ class DiscoverySeriesTests(unittest.TestCase):
                 2,
                 today=date(2026, 10, 17),
             ),
-            [{"date": "2026-10-16", "count": 0}, {"date": "2026-10-17", "count": 1}],
+            [
+                {"date": "2026-10-16", "count": 0, "average_7_day": 0.0},
+                {"date": "2026-10-17", "count": 1, "average_7_day": 0.5},
+            ],
         )
 
     def test_initial_inventory_is_excluded_without_changing_later_days(self):
@@ -56,13 +62,16 @@ class DiscoverySeriesTests(unittest.TestCase):
         self.assertEqual(
             discovery_series(runs, 3, today=date(2026, 9, 19)),
             [
-                {"date": "2026-09-18", "count": 5},
-                {"date": "2026-09-19", "count": 0},
+                {"date": "2026-09-18", "count": 5, "average_7_day": 5.0},
+                {"date": "2026-09-19", "count": 0, "average_7_day": 2.5},
             ],
         )
         self.assertEqual(
             discovery_series(runs, 0, today=date(2026, 9, 19)),
-            [{"date": "2026-09-18", "count": 5}, {"date": "2026-09-19", "count": 0}],
+            [
+                {"date": "2026-09-18", "count": 5, "average_7_day": 5.0},
+                {"date": "2026-09-19", "count": 0, "average_7_day": 2.5},
+            ],
         )
         self.assertEqual(
             discovery_series(
@@ -74,17 +83,37 @@ class DiscoverySeriesTests(unittest.TestCase):
                 0,
                 today=date(2026, 9, 18),
             ),
-            [{"date": "2026-09-18", "count": 1}],
+            [{"date": "2026-09-18", "count": 1, "average_7_day": 1.0}],
         )
 
     def test_fixed_range_starts_at_later_of_baseline_and_normal_cutoff(self):
         before_anniversary = discovery_series([], 365, today=date(2027, 1, 1))
-        self.assertEqual(before_anniversary[0], {"date": "2026-09-18", "count": 0})
-        self.assertEqual(before_anniversary[-1], {"date": "2027-01-01", "count": 0})
+        self.assertEqual(before_anniversary[0], {"date": "2026-09-18", "count": 0, "average_7_day": 0})
+        self.assertEqual(before_anniversary[-1], {"date": "2027-01-01", "count": 0, "average_7_day": 0.0})
 
         after_anniversary = discovery_series([], 365, today=date(2027, 10, 16))
-        self.assertEqual(after_anniversary[0], {"date": "2026-10-17", "count": 0})
+        self.assertEqual(after_anniversary[0], {"date": "2026-10-17", "count": 0, "average_7_day": 0.0})
         self.assertEqual(len(after_anniversary), 365)
+
+    def test_average_includes_weekends_and_lookback_before_selected_range(self):
+        runs = [{
+            "started_at": "2026-09-18T12:00:00+00:00",
+            "new_jobs": 44,
+            "daily_counts": {
+                "2026-09-18": 7,
+                "2026-09-19": 0,
+                "2026-09-20": 2,
+                "2026-09-21": 7,
+                "2026-09-22": 7,
+                "2026-09-23": 7,
+                "2026-09-24": 7,
+                "2026-09-25": 7,
+            },
+        }]
+        self.assertEqual(
+            discovery_series(runs, 1, today=date(2026, 9, 25)),
+            [{"date": "2026-09-25", "count": 7, "average_7_day": 5.29}],
+        )
 
 
 class DiscoveryHistoryTests(unittest.TestCase):

@@ -253,6 +253,9 @@ Older scan summaries without per-role discovery dates use the scan start date.
 The September 17, 2026 initial inventory is excluded from the trend and
 summary metrics. Its scan records remain stored. Until a selected range's
 normal start falls after September 18, 2026, the chart starts on that date.
+The seven-day rolling average chart appears above the daily-count chart. Both
+include weekend discoveries, and the table retains the exact day-by-day values.
+The summary cards always use the exact daily counts.
 
 ## Scan status
 
