@@ -10,6 +10,7 @@ EASTERN = ZoneInfo("America/New_York")
 # tracker started. Keep its source records, but omit that bootstrap count from
 # trends and summary metrics.
 BASELINE_DAY = date(2026, 9, 17)
+FIRST_TREND_DAY = BASELINE_DAY + timedelta(days=1)
 
 
 def discovery_day(timestamp: str) -> str:
@@ -38,22 +39,19 @@ def discovery_series(runs: list[dict], days: int, *, today: date | None = None) 
             daily_counts = {scan_day.isoformat(): run.get("new_jobs") or 0}
         for day_text, count in daily_counts.items():
             found_day = date.fromisoformat(day_text)
-            if found_day == BASELINE_DAY or found_day > today or (cutoff and found_day < cutoff):
+            if found_day < FIRST_TREND_DAY or found_day > today or (cutoff and found_day < cutoff):
                 continue
             counts[found_day] = counts.get(found_day, 0) + int(count)
             first_day = min(first_day, found_day) if first_day else found_day
-        if scan_day != BASELINE_DAY and scan_day <= today and (cutoff is None or scan_day >= cutoff):
+        if FIRST_TREND_DAY <= scan_day <= today and (cutoff is None or scan_day >= cutoff):
             first_day = min(first_day, scan_day) if first_day else scan_day
 
     start = cutoff or first_day
-    if start is None:
+    if start is None or today < FIRST_TREND_DAY:
         return []
-    series = []
-    for offset in range((today - start).days + 1):
-        day = start + timedelta(days=offset)
-        series.append(
-            {"date": day.isoformat(), "count": None, "excluded": True}
-            if day == BASELINE_DAY
-            else {"date": day.isoformat(), "count": counts.get(day, 0)}
-        )
-    return series
+    start = max(start, FIRST_TREND_DAY)
+    return [
+        {"date": (start + timedelta(days=offset)).isoformat(),
+         "count": counts.get(start + timedelta(days=offset), 0)}
+        for offset in range((today - start).days + 1)
+    ]

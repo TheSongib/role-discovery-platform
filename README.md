@@ -251,8 +251,8 @@ days old) into durable analytics records; subsequent scans write those records
 directly. History already expired before that first request cannot be recovered.
 Older scan summaries without per-role discovery dates use the scan start date.
 The September 17, 2026 initial inventory is excluded from the trend and
-summary metrics. Its scan records remain stored; a gap marks that date in
-fixed-range charts.
+summary metrics. Its scan records remain stored. Until a selected range's
+normal start falls after September 18, 2026, the chart starts on that date.
 
 ## Scan status
 

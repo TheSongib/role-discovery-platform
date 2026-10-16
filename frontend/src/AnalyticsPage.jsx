@@ -28,21 +28,12 @@ function RolesChart({ series }) {
   const bottom = compact ? 40 : 48
   const plotWidth = width - left - right
   const plotHeight = height - top - bottom
-  const maxCount = Math.max(1, ...series.map(day => day.count ?? 0))
+  const maxCount = Math.max(1, ...series.map(day => day.count))
   const axisMax = Math.max(4, Math.ceil(maxCount / 4) * 4)
   const x = index => left + (series.length === 1 ? plotWidth / 2 : index * plotWidth / (series.length - 1))
   const y = count => top + plotHeight * (1 - count / axisMax)
-  const segments = []
-  let currentSegment = []
-  series.forEach((day, index) => {
-    if (day.excluded) {
-      if (currentSegment.length) segments.push(currentSegment)
-      currentSegment = []
-    } else {
-      currentSegment.push({ index, count: day.count })
-    }
-  })
-  if (currentSegment.length) segments.push(currentSegment)
+  const points = series.map((day, index) => `${x(index)},${y(day.count)}`).join(' ')
+  const area = `M ${x(0)} ${y(0)} L ${points.replaceAll(' ', ' L ')} L ${x(series.length - 1)} ${y(0)} Z`
   const tickCount = compact ? 3 : 5
   const xTicks = [...new Set(Array.from({ length: tickCount }, (_, step) => Math.round(step * (series.length - 1) / (tickCount - 1))))]
 
@@ -77,16 +68,9 @@ function RolesChart({ series }) {
               </g>
             )
           })}
-          {segments.map((segment, segmentIndex) => {
-            const points = segment.map(point => `${x(point.index)},${y(point.count)}`).join(' ')
-            const area = `M ${x(segment[0].index)} ${y(0)} L ${points.replaceAll(' ', ' L ')} L ${x(segment[segment.length - 1].index)} ${y(0)} Z`
-            return <g key={segmentIndex}>
-              <path d={area} fill="url(#roles-area)" />
-              {segment.length === 1
-                ? <circle cx={x(segment[0].index)} cy={y(segment[0].count)} r="3" fill="#a78bfa" />
-                : <polyline points={points} fill="none" stroke="url(#roles-line)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />}
-            </g>
-          })}
+          <path d={area} fill="url(#roles-area)" />
+          <polyline points={points} fill="none" stroke="url(#roles-line)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+          {series.length === 1 && <circle cx={x(0)} cy={y(series[0].count)} r="4" fill="#a78bfa" />}
           {xTicks.map(index => (
             <text key={index} x={x(index)} y={height - 15} textAnchor={index === 0 ? 'start' : index === series.length - 1 ? 'end' : 'middle'} fill="#94a3b8" fontSize="12">
               {formatDay(series[index].date, { month: 'short', day: 'numeric', ...(series.length > 365 ? { year: '2-digit' } : {}) })}
@@ -95,7 +79,7 @@ function RolesChart({ series }) {
           {hovered !== null && (
             <g>
               <line x1={x(hovered)} x2={x(hovered)} y1={top} y2={y(0)} stroke="rgba(255,255,255,0.25)" strokeDasharray="4 4" />
-              {!series[hovered].excluded && <circle cx={x(hovered)} cy={y(series[hovered].count)} r="6" fill="#67e8f9" stroke="#111827" strokeWidth="3" />}
+              <circle cx={x(hovered)} cy={y(series[hovered].count)} r="6" fill="#67e8f9" stroke="#111827" strokeWidth="3" />
             </g>
           )}
         </svg>
@@ -103,7 +87,7 @@ function RolesChart({ series }) {
           <div className="pointer-events-none absolute top-3 rounded-lg border border-white/10 bg-[#141a2b] px-3 py-2 text-xs shadow-xl"
             style={{ left: `${Math.max(8, Math.min(80, x(hovered) / width * 100))}%` }}>
             <div className="text-slate-400">{formatDay(series[hovered].date, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</div>
-            <div className="mt-1 font-semibold text-cyan-200">{series[hovered].excluded ? 'Initial inventory excluded' : `${series[hovered].count} roles found`}</div>
+            <div className="mt-1 font-semibold text-cyan-200">{series[hovered].count} roles found</div>
           </div>
         )}
       </div>
@@ -112,7 +96,7 @@ function RolesChart({ series }) {
         <div className="mt-3 max-h-48 overflow-auto rounded-lg border border-white/10">
           <table className="w-full text-left">
             <thead className="sticky top-0 bg-[#171c2b] text-slate-300"><tr><th className="px-3 py-2">Date</th><th className="px-3 py-2">Roles found</th></tr></thead>
-            <tbody>{series.map(day => <tr key={day.date} className="border-t border-white/[0.05]"><td className="px-3 py-1.5">{day.date}</td><td className="px-3 py-1.5">{day.excluded ? 'Initial inventory excluded' : day.count}</td></tr>)}</tbody>
+            <tbody>{series.map(day => <tr key={day.date} className="border-t border-white/[0.05]"><td className="px-3 py-1.5">{day.date}</td><td className="px-3 py-1.5">{day.count}</td></tr>)}</tbody>
           </table>
         </div>
       </details>
@@ -142,9 +126,9 @@ export default function AnalyticsPage({ refreshKey }) {
     return () => controller.abort()
   }, [range, refreshKey])
 
-  const total = series.reduce((sum, day) => sum + (day.count ?? 0), 0)
+  const total = series.reduce((sum, day) => sum + day.count, 0)
   const activeDays = series.filter(day => day.count > 0).length
-  const peak = Math.max(0, ...series.map(day => day.count ?? 0))
+  const peak = Math.max(0, ...series.map(day => day.count))
 
   return (
     <section className="space-y-6" aria-labelledby="analytics-title">
@@ -186,7 +170,7 @@ export default function AnalyticsPage({ refreshKey }) {
           : !series.length ? <p className="py-24 text-center text-sm text-slate-400">No scan history is available yet.</p>
           : <RolesChart series={series} />}
       </div>
-      <p className="text-xs text-slate-500">Counts use the tracker’s first discovery of each role, including roles since removed from the live feed. Earlier history is available where scan records were retained.{baselineDate && ` The initial inventory on ${formatDay(baselineDate, { month: 'long', day: 'numeric', year: 'numeric' })} is excluded from the chart and summary metrics.`}</p>
+      <p className="text-xs text-slate-500">Counts use the tracker’s first discovery of each role, including roles since removed from the live feed. Earlier history is available where scan records were retained.{baselineDate && ` The initial inventory on ${formatDay(baselineDate, { month: 'long', day: 'numeric', year: 'numeric' })} is excluded; date ranges start no earlier than the following day.`}</p>
     </section>
   )
 }

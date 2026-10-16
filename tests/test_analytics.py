@@ -56,7 +56,6 @@ class DiscoverySeriesTests(unittest.TestCase):
         self.assertEqual(
             discovery_series(runs, 3, today=date(2026, 9, 19)),
             [
-                {"date": "2026-09-17", "count": None, "excluded": True},
                 {"date": "2026-09-18", "count": 5},
                 {"date": "2026-09-19", "count": 0},
             ],
@@ -77,6 +76,15 @@ class DiscoverySeriesTests(unittest.TestCase):
             ),
             [{"date": "2026-09-18", "count": 1}],
         )
+
+    def test_fixed_range_starts_at_later_of_baseline_and_normal_cutoff(self):
+        before_anniversary = discovery_series([], 365, today=date(2027, 1, 1))
+        self.assertEqual(before_anniversary[0], {"date": "2026-09-18", "count": 0})
+        self.assertEqual(before_anniversary[-1], {"date": "2027-01-01", "count": 0})
+
+        after_anniversary = discovery_series([], 365, today=date(2027, 10, 16))
+        self.assertEqual(after_anniversary[0], {"date": "2026-10-17", "count": 0})
+        self.assertEqual(len(after_anniversary), 365)
 
 
 class DiscoveryHistoryTests(unittest.TestCase):
