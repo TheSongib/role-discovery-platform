@@ -1,4 +1,5 @@
 import os
+import json
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -96,7 +97,8 @@ def init_db():
                 total_seen           INTEGER NOT NULL DEFAULT 0,
                 not_remote           INTEGER NOT NULL DEFAULT 0,
                 keyword_filtered     INTEGER NOT NULL DEFAULT 0,
-                new_jobs             INTEGER NOT NULL DEFAULT 0
+                new_jobs             INTEGER NOT NULL DEFAULT 0,
+                daily_counts         TEXT
             )
         """)
         conn.execute("""
@@ -122,6 +124,7 @@ def init_db():
             "ALTER TABLE scan_runs ADD COLUMN total_found INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE scan_runs ADD COLUMN not_remote INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE scan_runs ADD COLUMN keyword_filtered INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE scan_runs ADD COLUMN daily_counts TEXT",
             "ALTER TABLE company_scan_results ADD COLUMN jobs_found INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE company_scan_results ADD COLUMN not_remote INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE company_scan_results ADD COLUMN keyword_filtered INTEGER NOT NULL DEFAULT 0",
@@ -216,6 +219,7 @@ def finish_scan_run(
     not_remote: int,
     keyword_filtered: int,
     new_jobs: int,
+    daily_counts: dict[str, int] | None = None,
 ):
     if _uses_dynamodb():
         return _dynamo().finish_scan_run(
@@ -228,6 +232,7 @@ def finish_scan_run(
             not_remote=not_remote,
             keyword_filtered=keyword_filtered,
             new_jobs=new_jobs,
+            daily_counts=daily_counts,
         )
     with get_conn() as conn:
         conn.execute(
@@ -235,7 +240,8 @@ def finish_scan_run(
             UPDATE scan_runs
             SET status = ?, finished_at = ?, successful_companies = ?,
                 failed_companies = ?, total_found = ?, total_seen = ?,
-                not_remote = ?, keyword_filtered = ?, new_jobs = ?
+                not_remote = ?, keyword_filtered = ?, new_jobs = ?,
+                daily_counts = ?
             WHERE id = ?
             """,
             (
@@ -248,10 +254,24 @@ def finish_scan_run(
                 not_remote,
                 keyword_filtered,
                 new_jobs,
+                json.dumps(daily_counts) if daily_counts is not None else None,
                 scan_id,
             ),
         )
         conn.commit()
+
+
+def list_discovery_runs() -> list[dict]:
+    """Return completed scan counts, including roles no longer in the feed."""
+    if _uses_dynamodb():
+        return _dynamo().list_discovery_runs()
+    with get_conn() as conn:
+        return [
+            dict(row) for row in conn.execute(
+                "SELECT started_at, new_jobs, daily_counts FROM scan_runs "
+                "WHERE status != 'running' ORDER BY started_at"
+            ).fetchall()
+        ]
 
 
 def get_latest_scan() -> dict | None:

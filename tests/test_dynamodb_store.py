@@ -350,6 +350,31 @@ class DynamoDBStoreTests(unittest.TestCase):
 
         self.assertEqual(dynamodb_store.job_count(), 1)
 
+    def test_discovery_history_backfills_and_survives_scan_expiry(self):
+        table = dynamodb_store._state_table()
+        old_id = "2026-09-01T12:00:00+00:00#old"
+        table.put_item(Item={
+            "pk": "SCANS", "sk": old_id, "started_at": old_id.split("#")[0],
+            "status": "success", "new_jobs": 3, "expires_at": 123,
+        })
+        self.assertEqual(
+            [(run["sk"], run["new_jobs"]) for run in dynamodb_store.list_discovery_runs()],
+            [(old_id, 3)],
+        )
+
+        new_id = dynamodb_store.create_scan_run("manual", 1)
+        dynamodb_store.finish_scan_run(
+            new_id, "success", 1, 0, 1, 1, 0, 0, 2,
+            daily_counts={"2026-10-16": 2},
+        )
+        table.delete_item(Key={"pk": "SCANS", "sk": old_id})
+        table.delete_item(Key={"pk": "SCANS", "sk": new_id})
+
+        runs = dynamodb_store.list_discovery_runs()
+        self.assertEqual({run["sk"]: run["new_jobs"] for run in runs}, {old_id: 3, new_id: 2})
+        self.assertEqual(next(run for run in runs if run["sk"] == new_id)["daily_counts"], {"2026-10-16": 2})
+        self.assertTrue(all("expires_at" not in run for run in runs))
+
 
 if __name__ == "__main__":
     unittest.main()

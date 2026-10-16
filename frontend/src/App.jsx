@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import AnalyticsPage from './AnalyticsPage'
 
 // ── Date helpers ─────────────────────────────────────────────────────────────
 function relativeDate(dateStr) {
@@ -425,7 +426,7 @@ export default function App() {
   const [appliedError, setAppliedError] = useState(null)
   const [loading, setLoading]       = useState(true)
   const [error, setError]           = useState(null)
-  const [view, setView]             = useState('active')
+  const [view, setView]             = useState(() => window.location.hash === '#/analytics' ? 'analytics' : 'active')
   const [scanning, setScanning]     = useState(false)
   const [scanResult, setScanResult] = useState(null) // { new_jobs, total_seen }
   const [maxAge, setMaxAge]         = useState(3)
@@ -447,7 +448,7 @@ export default function App() {
       .then(data => {
         setAuth(data)
         if (!data.can_manage) {
-          setView('active')
+          setView(current => current === 'hidden' || current === 'applied' ? 'active' : current)
           setAppliedJobs([])
         }
       })
@@ -475,6 +476,12 @@ export default function App() {
   }
 
   useEffect(() => { loadAuth() }, [])
+
+  useEffect(() => {
+    const onHashChange = () => setView(window.location.hash === '#/analytics' ? 'analytics' : 'active')
+    window.addEventListener('hashchange', onHashChange)
+    return () => window.removeEventListener('hashchange', onHashChange)
+  }, [])
 
   useEffect(() => {
     if (authLoaded) loadJobs(maxAge, auth.can_manage)
@@ -627,14 +634,26 @@ export default function App() {
           </div>
 
           <div className="flex flex-wrap items-center justify-end gap-2.5">
-            {!loading && !error && (
+            <nav className="mr-1 flex items-center gap-1 rounded-xl border border-white/10 bg-white/[0.03] p-1" aria-label="Main navigation">
+              <a href="#/roles" onClick={() => setView('active')}
+                aria-current={view !== 'analytics' ? 'page' : undefined}
+                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${view !== 'analytics' ? 'bg-violet-500/25 text-violet-100' : 'text-slate-400 hover:text-white'}`}>
+                Roles
+              </a>
+              <a href="#/analytics" onClick={() => setView('analytics')}
+                aria-current={view === 'analytics' ? 'page' : undefined}
+                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${view === 'analytics' ? 'bg-violet-500/25 text-violet-100' : 'text-slate-400 hover:text-white'}`}>
+                Analytics
+              </a>
+            </nav>
+            {view !== 'analytics' && !loading && !error && (
               <span className="mr-1 text-xs text-slate-500">
                 <span className="font-semibold text-slate-200">{visible.length}</span> listings
               </span>
             )}
 
             {/* Age filter dropdown */}
-            {view !== 'applied' && (
+            {view !== 'applied' && view !== 'analytics' && (
               <select
                 value={maxAge}
                 onChange={e => setMaxAge(Number(e.target.value))}
@@ -684,7 +703,7 @@ export default function App() {
                   </svg>
                 </button>
 
-                <button
+                {view !== 'analytics' && <button
                   onClick={() => setView(current => current === 'hidden' ? 'active' : 'hidden')}
                   className={`flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-medium transition-colors ${
                     view === 'hidden'
@@ -694,9 +713,9 @@ export default function App() {
                 >
                   {view === 'hidden' ? <EyeIcon /> : <EyeSlashIcon />}
                   {view === 'hidden' ? `Showing hidden (${hidden.length})` : `Hidden (${hidden.length})`}
-                </button>
+                </button>}
 
-                <button
+                {view !== 'analytics' && <button
                   onClick={() => setView(current => current === 'applied' ? 'active' : 'applied')}
                   className={`flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-medium transition-colors ${
                     view === 'applied'
@@ -706,7 +725,7 @@ export default function App() {
                 >
                   <CheckIcon />
                   {view === 'applied' ? `Showing applied (${appliedJobs.length})` : `Applied (${appliedJobs.length})`}
-                </button>
+                </button>}
 
                 <button
                   onClick={startScan}
@@ -762,6 +781,7 @@ export default function App() {
       </header>
 
       <main className="relative mx-auto max-w-7xl space-y-6 px-6 py-8 sm:py-10">
+        {view === 'analytics' ? <AnalyticsPage refreshKey={latestScan?.finished_at} /> : <>
 
         {view !== 'applied' && <ScanStatusPanel scan={latestScan} />}
 
@@ -927,6 +947,7 @@ export default function App() {
             </table>
           </div>
         </div>
+        </>}
       </main>
     </div>
   )

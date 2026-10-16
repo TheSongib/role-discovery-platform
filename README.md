@@ -15,6 +15,7 @@ workloads are stateless.
 - Records every scan and each company's success or failure so broken sources are visible
 - Scans every 15 minutes on weekdays from 7 AM to 8 PM Eastern and hourly at all other times
 - Serves a React frontend with live data, a one-click scan button, and separate hidden and applied job views
+- Shows an analytics page with daily first discoveries and historical hiring trends
 
 ## Companies tracked
 
@@ -237,6 +238,18 @@ opening. Applied postings also stay in storage after they disappear from a
 company feed, so the applied view and its all-time and weekly counts remain
 available. Permanently ignored postings remain in storage, are excluded from
 the active, hidden, and applied views, and are never removed or resurfaced.
+
+## Analytics
+
+The **Analytics** page charts newly discovered roles by Eastern calendar day.
+It counts a role when the same insert logic that surfaces it in the main feed
+marks it as new; later hiding, applying, or removal does not erase that day's
+count. The chart includes zero-activity days and 30-day, 90-day, one-year, and
+all-time ranges. SQLite can backfill from all completed scan runs. On DynamoDB,
+the first analytics request copies retained scan summaries (normally up to 90
+days old) into durable analytics records; subsequent scans write those records
+directly. History already expired before that first request cannot be recovered.
+Older scan summaries without per-role discovery dates use the scan start date.
 
 ## Scan status
 
