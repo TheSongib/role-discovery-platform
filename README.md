@@ -21,6 +21,8 @@ workloads are stateless.
 
 | Company | ATS |
 |---|---|
+| Amazon | Custom Amazon Jobs JSON |
+| Google | Custom Google Careers |
 | Affirm | Greenhouse |
 | Airbnb | Greenhouse |
 | Coinbase | Greenhouse |
@@ -48,7 +50,7 @@ workloads are stateless.
 ```
 JobTracker/
 ├── config.py      # Company list and keyword filters
-├── scraper.py     # ATS scrapers (Greenhouse, Lever, Eightfold, Eightfold v2, Workday)
+├── scraper.py     # ATS scrapers and custom Amazon / Google connectors
 ├── db.py          # Persistence facade (SQLite locally, DynamoDB on AWS)
 ├── dynamodb_store.py # DynamoDB persistence implementation
 ├── api.py         # FastAPI backend (serves job data + triggers scans)
@@ -201,6 +203,18 @@ Location is additionally required to indicate **US** (checked separately from `R
 | **iCIMS / Phenom** | Public REST API (GET) | Used by GitHub; pagination via `page=` param |
 | **Ashby** | Public REST API (GET) | Single-call response, no pagination; US filtered via `addressCountry` field |
 | **ClinchTalent** | Playwright (headless Chromium) | Used by Zoom; AWS WAF requires browser to solve challenge |
+| **Amazon Jobs** | Public search JSON (GET) | Custom connector; paginates virtual-US listings and checks each location's workplace type and country |
+| **Google Careers** | Server-rendered search data (GET) | Custom connector; paginates remote-eligible US listings and checks the posting's remote-location note |
+
+Amazon and Google use `ats: "amazon"` and `ats: "google"` respectively in
+`config.py`. Both connectors use the existing title filters and need no browser
+or API credentials. Their scan counts cover the remote-US search results,
+before local title filtering. A confirmed empty search is successful; request
+errors, unexpected response formats, incomplete pages, duplicate listings, or
+changing totals fail the company scan so existing jobs are not incorrectly
+marked missing. These custom interfaces are undocumented and may need updates
+if the career sites change. Google publication dates are left empty because its
+embedded timestamp meanings are undocumented; first discovery is still recorded.
 
 ## Database
 
