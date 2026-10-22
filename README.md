@@ -9,6 +9,7 @@ workloads are stateless.
 
 - Scrapes career pages from a configurable list of companies
 - Filters for **remote US** roles in **software engineering, security engineering, SRE, DevOps, and IAM**
+- Also includes **Pittsburgh** locations at **Amazon and Google**, including onsite and hybrid roles (case-insensitive location matching)
 - Excludes senior/leadership titles (staff, principal, director, architect, manager)
 - Stores results in SQLite locally or DynamoDB on AWS, with deduplication and repost detection
 - Removes jobs only after successful company scans have not found them for 24 hours
@@ -203,13 +204,20 @@ Location is additionally required to indicate **US** (checked separately from `R
 | **iCIMS / Phenom** | Public REST API (GET) | Used by GitHub; pagination via `page=` param |
 | **Ashby** | Public REST API (GET) | Single-call response, no pagination; US filtered via `addressCountry` field |
 | **ClinchTalent** | Playwright (headless Chromium) | Used by Zoom; AWS WAF requires browser to solve challenge |
-| **Amazon Jobs** | Public search JSON (GET) | Custom connector; paginates virtual-US listings and checks each location's workplace type and country |
-| **Google Careers** | Server-rendered search data (GET) | Custom connector; paginates remote-eligible US listings and checks the posting's remote-location note |
+| **Amazon Jobs** | Public search JSON (GET) | Custom connector; paginates virtual-US and Pittsburgh searches and checks each location's workplace type and country |
+| **Google Careers** | Server-rendered search data (GET) | Custom connector; paginates remote-US and Pittsburgh searches and checks remote eligibility or an explicit Pittsburgh location |
 
 Amazon and Google use `ats: "amazon"` and `ats: "google"` respectively in
 `config.py`. Both connectors use the existing title filters and need no browser
-or API credentials. Their scan counts cover the remote-US search results,
-before local title filtering. A confirmed empty search is successful; request
+or API credentials. Each runs a remote-US search and a separate Pittsburgh
+search, deduplicating by posting ID before counting or filtering. Pittsburgh
+matching checks all listed locations, including secondary locations, without
+regard to case; mentioning Pittsburgh only in a title does not qualify. The
+existing title filters still apply. Onsite and hybrid Pittsburgh jobs are stored
+with `is_remote=0`; jobs with a verified US-remote option retain `is_remote=1`.
+All other companies keep their existing remote-US behavior.
+
+A confirmed empty search is successful; request
 errors, unexpected response formats, incomplete pages, duplicate listings, or
 changing totals fail the company scan so existing jobs are not incorrectly
 marked missing. These custom interfaces are undocumented and may need updates
@@ -284,11 +292,13 @@ GET /api/scans/latest
 
 For each successful company scan, the status reports the number of jobs returned
 by the configured ATS query, the number removed by include/exclude title terms,
-and the number removed by remote/US eligibility checks. Keyword filtering runs
+and the number removed by location eligibility checks. The existing API field
+`not_remote` is shown as **outside target locations** in the UI and CLI; Amazon
+and Google accept Pittsburgh locations as well as remote-US jobs. Keyword filtering runs
 first, so the categories are mutually exclusive:
 
 ```text
-jobs found = removed by keywords + not remote + matching
+jobs found = removed by keywords + outside target locations + matching
 ```
 
 Some company URLs already contain ATS-side location, department, or seniority

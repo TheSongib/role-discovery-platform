@@ -78,7 +78,7 @@ def cmd_scrape(export_fmt: str | None):
         print(
             f"  {company_found} found, "
             f"{company_keyword_filtered} removed by keywords, "
-            f"{company_not_remote} not remote, "
+            f"{company_not_remote} outside target locations, "
             f"{len(jobs)} matching, {new_count} new, {skipped} already stored, "
             f"{removed_count} closed."
         )
@@ -124,7 +124,7 @@ def cmd_scrape(export_fmt: str | None):
     print(
         f"\nDone ({status}). {total_found} found, "
         f"{total_keyword_filtered} removed by keywords, "
-        f"{total_not_remote} not remote, "
+        f"{total_not_remote} outside target locations, "
         f"{total_seen} matching, {total_new} new. "
         f"Companies: {successful_companies} succeeded, {failed_companies} failed."
     )

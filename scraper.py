@@ -1041,11 +1041,14 @@ def _validate_custom_page(batch: list, total: int, seen: set, ids: list, source:
     seen.update(ids)
 
 
-def scrape_amazon(careers_url: str, company_name: str) -> list[dict]:
-    """Read Amazon's public search JSON, including every virtual-US result page."""
+def _is_pittsburgh_location(location: str) -> bool:
+    """Match the city in location data only, regardless of letter case."""
+    return "pittsburgh" in location.casefold()
+
+
+def _fetch_amazon_postings(params: dict) -> list[dict]:
+    """Fetch a complete Amazon search before applying local filters."""
     api_url = "https://www.amazon.jobs/en/search.json"
-    params = parse_qs(urlparse(careers_url).query)
-    params.update({"country": "USA", "location[]": "virtual-locations", "result_limit": 100})
     print(f"  -> Amazon Jobs API: {api_url}")
     all_postings = []
     seen = set()
@@ -1085,6 +1088,18 @@ def scrape_amazon(careers_url: str, company_name: str) -> list[dict]:
             break
     else:
         raise ScrapeError("Amazon Jobs exceeded the pagination limit")
+    return all_postings
+
+
+def scrape_amazon(careers_url: str, company_name: str) -> list[dict]:
+    """Combine virtual-US and Pittsburgh searches, deduplicated before filtering."""
+    params = parse_qs(urlparse(careers_url).query)
+    params.update({"country": "USA", "location[]": "virtual-locations", "result_limit": 100})
+    remote_postings = _fetch_amazon_postings(params)
+    local_params = {key: value for key, value in params.items() if key != "location[]"}
+    local_params["city"] = "Pittsburgh"
+    local_postings = _fetch_amazon_postings(local_params)
+    all_postings = list({posting["id"]: posting for posting in remote_postings + local_postings}.values())
 
     jobs = []
     not_remote = keyword_filtered = 0
@@ -1107,23 +1122,36 @@ def scrape_amazon(careers_url: str, company_name: str) -> list[dict]:
                 and (location.get("countryIso2a") or location.get("normalizedCountryCode"))
                 in ("US", "USA")
             ]
+            local_options = [
+                location for location in locations
+                if _is_pittsburgh_location(" ".join(
+                    location.get(key) or "" for key in ("location", "normalizedLocation", "city")
+                ))
+            ]
         except (ValueError, AttributeError, TypeError) as exc:
             raise ScrapeError("Amazon Jobs returned malformed location data") from exc
-        if not remote_us:
+        if not remote_us and not local_options:
             not_remote += 1
             continue
-        location = "; ".join(dict.fromkeys(
+        remote_location = "; ".join(dict.fromkeys(
             option.get("location") or option.get("normalizedLocation") or "US"
             for option in remote_us
         ))
+        local_location = "; ".join(dict.fromkeys(
+            option.get("location") or option.get("normalizedLocation") or option["city"]
+            for option in local_options if option not in remote_us
+        ))
+        location = "; ".join(label for label in (
+            f"Remote - {remote_location}" if remote_location else "", local_location,
+        ) if label)
         try:
             date_posted = datetime.strptime(posting.get("posted_date") or "", "%B %d, %Y").date().isoformat()
         except ValueError:
             date_posted = None
         jobs.append({
-            "title": title, "company": company_name, "location": f"Remote - {location}",
+            "title": title, "company": company_name, "location": location,
             "url": f"https://www.amazon.jobs{posting['job_path']}",
-            "is_remote": 1, "department": posting.get("job_category") or "",
+            "is_remote": int(bool(remote_us)), "department": posting.get("job_category") or "",
             "description": None, "date_posted": date_posted,
             # updated_time is a relative label, not a reliable timestamp.
             "ats_updated_at": None, "date_found": _now(), "last_seen": _now(),
@@ -1151,11 +1179,9 @@ def _google_search_data(html: str) -> tuple[list, int]:
     return data[0] or [], data[2]
 
 
-def scrape_google(careers_url: str, company_name: str) -> list[dict]:
-    """Read paginated, server-rendered Google Careers search data."""
+def _fetch_google_postings(params: dict) -> list[list]:
+    """Read a complete server-rendered Google Careers search."""
     search_url = "https://www.google.com/about/careers/applications/jobs/results/"
-    params = parse_qs(urlparse(careers_url).query)
-    params.update({"location": "United States", "has_remote": "true"})
     print(f"  -> Google Careers: {search_url}")
     all_postings = []
     seen = set()
@@ -1189,6 +1215,19 @@ def scrape_google(careers_url: str, company_name: str) -> list[dict]:
             break
     else:
         raise ScrapeError("Google Careers exceeded the pagination limit")
+    return all_postings
+
+
+def scrape_google(careers_url: str, company_name: str) -> list[dict]:
+    """Combine remote-US and Pittsburgh searches, preserving title filters."""
+    search_url = "https://www.google.com/about/careers/applications/jobs/results/"
+    params = parse_qs(urlparse(careers_url).query)
+    params.update({"location": "United States", "has_remote": "true"})
+    remote_postings = _fetch_google_postings(params)
+    local_params = {key: value for key, value in params.items() if key != "has_remote"}
+    local_params["location"] = "Pittsburgh, PA, USA"
+    local_postings = _fetch_google_postings(local_params)
+    all_postings = list({posting[0]: posting for posting in remote_postings + local_postings}.values())
 
     jobs = []
     not_remote = keyword_filtered = 0
@@ -1205,13 +1244,21 @@ def scrape_google(careers_url: str, company_name: str) -> list[dict]:
             label.strip().rstrip(".") for group in remote_labels for label in group.split(";")
             if _is_us_workable(label)
         ]
-        if posting[16] != 1 or not remote_us:
+        local_locations = [
+            location[0] for location in posting[9]
+            if isinstance(location, list) and location and isinstance(location[0], str)
+            and _is_pittsburgh_location(location[0])
+        ]
+        is_remote = posting[16] == 1 and bool(remote_us)
+        if not is_remote and not local_locations:
             not_remote += 1
             continue
+        location_labels = (["Remote - " + "; ".join(dict.fromkeys(remote_us))] if is_remote else [])
+        location_labels.extend(label for label in dict.fromkeys(local_locations) if label not in remote_us)
         jobs.append({
             "title": title, "company": company_name,
-            "location": "Remote - " + "; ".join(dict.fromkeys(remote_us)),
-            "url": f"{search_url}{posting[0]}", "is_remote": 1,
+            "location": "; ".join(location_labels),
+            "url": f"{search_url}{posting[0]}", "is_remote": int(is_remote),
             "department": "", "description": None,
             # These arrays have undocumented timestamp semantics; discovery
             # time remains accurate without inventing a publication date.
