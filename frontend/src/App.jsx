@@ -369,7 +369,7 @@ function ScanStatusPanel({ scan }) {
               {scan.trigger} scan · {relativeDate(scan.finished_at ?? scan.started_at)}
             </p>
             <p className="mt-1 text-xs text-slate-400">
-              {scan.total_found} jobs found · {scan.keyword_filtered} removed by keywords · {scan.not_remote} not remote · {scan.total_seen} matching
+              {scan.total_found} jobs found · {scan.keyword_filtered} removed by keywords · {scan.not_remote} outside target locations · {scan.total_seen} matching
             </p>
           </div>
         </div>
@@ -403,7 +403,7 @@ function ScanStatusPanel({ scan }) {
               <div className="flex shrink-0 items-center gap-3 text-xs">
                 {company.status === 'success' && (
                   <span className="text-slate-500">
-                    {company.jobs_found} found · {company.keyword_filtered} removed by keywords · {company.not_remote} not remote · {company.jobs_seen} matching
+                    {company.jobs_found} found · {company.keyword_filtered} removed by keywords · {company.not_remote} outside target locations · {company.jobs_seen} matching
                   </span>
                 )}
                 <span className={company.status === 'success' ? 'font-medium text-emerald-300' : 'font-medium text-red-300'}>
@@ -629,7 +629,7 @@ export default function App() {
             </div>
             <div>
               <h1 className="text-sm font-semibold leading-none tracking-wide text-white">JobTracker</h1>
-              <p className="mt-1 text-[11px] tracking-wide text-slate-500">Remote US · Engineering &amp; Security</p>
+              <p className="mt-1 text-[11px] tracking-wide text-slate-500">Remote US + Pittsburgh · Engineering &amp; Security</p>
             </div>
           </div>
 

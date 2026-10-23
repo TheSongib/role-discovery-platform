@@ -1,6 +1,9 @@
+import json
 import re
 import requests
 from datetime import datetime, timezone
+from html import unescape
+from urllib.parse import parse_qs, urlparse
 
 from config import REMOTE_KEYWORDS
 from keywords_store import get_keywords
@@ -1024,6 +1027,249 @@ def scrape_icims_phenom(careers_url: str, company_name: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Amazon Jobs and Google Careers (custom career sites)
+# ---------------------------------------------------------------------------
+
+def _validate_custom_page(batch: list, total: int, seen: set, ids: list, source: str):
+    """Reject incomplete or shifting pagination before stored jobs are reconciled."""
+    if len(ids) != len(set(ids)) or seen.intersection(ids):
+        raise ScrapeError(f"{source} returned duplicate listings during pagination")
+    if not batch and len(seen) < total:
+        raise ScrapeError(f"{source} pagination ended before all listings were returned")
+    if len(seen) + len(batch) > total:
+        raise ScrapeError(f"{source} returned more listings than its reported total")
+    seen.update(ids)
+
+
+def _is_pittsburgh_location(location: str) -> bool:
+    """Match the city in location data only, regardless of letter case."""
+    return "pittsburgh" in location.casefold()
+
+
+def _fetch_amazon_postings(params: dict) -> list[dict]:
+    """Fetch a complete Amazon search before applying local filters."""
+    api_url = "https://www.amazon.jobs/en/search.json"
+    print(f"  -> Amazon Jobs API: {api_url}")
+    all_postings = []
+    seen = set()
+    total = None
+    for _page in range(100):
+        try:
+            response = requests.get(
+                api_url, params={**params, "offset": len(all_postings)},
+                headers=HEADERS, timeout=HTTP_TIMEOUT_SECONDS,
+            )
+            response.raise_for_status()
+            data = response.json()
+        except (requests.RequestException, ValueError) as exc:
+            raise ScrapeError(f"Amazon Jobs request failed: {exc}") from exc
+        if (
+            not isinstance(data, dict) or data.get("error")
+            or not isinstance(data.get("jobs"), list)
+            or type(data.get("hits")) is not int or data["hits"] < 0
+        ):
+            raise ScrapeError("Amazon Jobs returned an unexpected response shape")
+        if total is not None and data["hits"] != total:
+            raise ScrapeError("Amazon Jobs result count changed during pagination")
+        total = data["hits"]
+        # Amazon caps hits at 10,000; this cannot establish complete coverage.
+        if total >= 10000:
+            raise ScrapeError("Amazon Jobs hit its search result cap; narrow the query")
+        batch = data["jobs"]
+        if any(
+            not isinstance(job, dict) or not job.get("id")
+            or not isinstance(job.get("title"), str) or not job.get("job_path")
+            for job in batch
+        ):
+            raise ScrapeError("Amazon Jobs returned a malformed listing")
+        _validate_custom_page(batch, total, seen, [job["id"] for job in batch], "Amazon Jobs")
+        all_postings.extend(batch)
+        if len(all_postings) == total:
+            break
+    else:
+        raise ScrapeError("Amazon Jobs exceeded the pagination limit")
+    return all_postings
+
+
+def scrape_amazon(careers_url: str, company_name: str) -> list[dict]:
+    """Combine virtual-US and Pittsburgh searches, deduplicated before filtering."""
+    params = parse_qs(urlparse(careers_url).query)
+    params.update({"country": "USA", "location[]": "virtual-locations", "result_limit": 100})
+    remote_postings = _fetch_amazon_postings(params)
+    local_params = {key: value for key, value in params.items() if key != "location[]"}
+    local_params["city"] = "Pittsburgh"
+    local_postings = _fetch_amazon_postings(local_params)
+    all_postings = list({posting["id"]: posting for posting in remote_postings + local_postings}.values())
+
+    jobs = []
+    not_remote = keyword_filtered = 0
+    for posting in all_postings:
+        title = posting["title"]
+        if not _matches_role(title):
+            keyword_filtered += 1
+            continue
+        # Locations are JSON strings in the public feed. Keep workplace type
+        # paired with country: an overseas virtual option plus a US office
+        # must not qualify as a remote-US job.
+        try:
+            locations = [
+                json.loads(location) if isinstance(location, str) else location
+                for location in (posting.get("locations") or [])
+            ]
+            remote_us = [
+                location for location in locations
+                if location.get("type") in ("VIRTUAL", "REMOTE")
+                and (location.get("countryIso2a") or location.get("normalizedCountryCode"))
+                in ("US", "USA")
+            ]
+            local_options = [
+                location for location in locations
+                if _is_pittsburgh_location(" ".join(
+                    location.get(key) or "" for key in ("location", "normalizedLocation", "city")
+                ))
+            ]
+        except (ValueError, AttributeError, TypeError) as exc:
+            raise ScrapeError("Amazon Jobs returned malformed location data") from exc
+        if not remote_us and not local_options:
+            not_remote += 1
+            continue
+        remote_location = "; ".join(dict.fromkeys(
+            option.get("location") or option.get("normalizedLocation") or "US"
+            for option in remote_us
+        ))
+        local_location = "; ".join(dict.fromkeys(
+            option.get("location") or option.get("normalizedLocation") or option["city"]
+            for option in local_options if option not in remote_us
+        ))
+        location = "; ".join(label for label in (
+            f"Remote - {remote_location}" if remote_location else "", local_location,
+        ) if label)
+        try:
+            date_posted = datetime.strptime(posting.get("posted_date") or "", "%B %d, %Y").date().isoformat()
+        except ValueError:
+            date_posted = None
+        jobs.append({
+            "title": title, "company": company_name, "location": location,
+            "url": f"https://www.amazon.jobs{posting['job_path']}",
+            "is_remote": int(bool(remote_us)), "department": posting.get("job_category") or "",
+            "description": None, "date_posted": date_posted,
+            # updated_time is a relative label, not a reliable timestamp.
+            "ats_updated_at": None, "date_found": _now(), "last_seen": _now(),
+            "source_url": careers_url,
+        })
+    return ScrapeResult(jobs, total_found=len(all_postings), not_remote=not_remote,
+                        keyword_filtered=keyword_filtered)
+
+
+def _google_search_data(html: str) -> tuple[list, int]:
+    """Decode the search data embedded in HTML without executing JavaScript."""
+    match = re.search(r"AF_initDataCallback\(\{\s*key:\s*'ds:1'.*?\bdata:", html, re.DOTALL)
+    if not match:
+        raise ScrapeError("Google Careers search data was not found")
+    try:
+        data, _end = json.JSONDecoder().raw_decode(html[match.end():].lstrip())
+    except ValueError as exc:
+        raise ScrapeError("Google Careers search data was not valid JSON") from exc
+    if (
+        not isinstance(data, list) or len(data) < 4
+        or type(data[2]) is not int or data[2] < 0
+        or (not isinstance(data[0], list) and not (data[0] is None and data[2] == 0))
+    ):
+        raise ScrapeError("Google Careers returned an unexpected search data shape")
+    return data[0] or [], data[2]
+
+
+def _fetch_google_postings(params: dict) -> list[list]:
+    """Read a complete server-rendered Google Careers search."""
+    search_url = "https://www.google.com/about/careers/applications/jobs/results/"
+    print(f"  -> Google Careers: {search_url}")
+    all_postings = []
+    seen = set()
+    total = None
+    for page in range(1, 101):
+        try:
+            response = requests.get(
+                search_url, params={**params, "page": page},
+                headers=HEADERS, timeout=HTTP_TIMEOUT_SECONDS,
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            raise ScrapeError(f"Google Careers page {page} failed: {exc}") from exc
+        batch, page_total = _google_search_data(response.text)
+        if total is not None and page_total != total:
+            raise ScrapeError("Google Careers result count changed during pagination")
+        total = page_total
+        if any(
+            not isinstance(job, list) or len(job) < 19
+            or not isinstance(job[0], str) or not job[0].isdigit()
+            or not isinstance(job[1], str) or not isinstance(job[9], list)
+            or job[16] not in (None, 0, 1)
+            or not isinstance(job[18], list) or len(job[18]) < 2
+            or not isinstance(job[18][1], str)
+            for job in batch
+        ):
+            raise ScrapeError("Google Careers returned a malformed listing")
+        _validate_custom_page(batch, total, seen, [job[0] for job in batch], "Google Careers")
+        all_postings.extend(batch)
+        if len(all_postings) == total:
+            break
+    else:
+        raise ScrapeError("Google Careers exceeded the pagination limit")
+    return all_postings
+
+
+def scrape_google(careers_url: str, company_name: str) -> list[dict]:
+    """Combine remote-US and Pittsburgh searches, preserving title filters."""
+    search_url = "https://www.google.com/about/careers/applications/jobs/results/"
+    params = parse_qs(urlparse(careers_url).query)
+    params.update({"location": "United States", "has_remote": "true"})
+    remote_postings = _fetch_google_postings(params)
+    local_params = {key: value for key, value in params.items() if key != "has_remote"}
+    local_params["location"] = "Pittsburgh, PA, USA"
+    local_postings = _fetch_google_postings(local_params)
+    all_postings = list({posting[0]: posting for posting in remote_postings + local_postings}.values())
+
+    jobs = []
+    not_remote = keyword_filtered = 0
+    for posting in all_postings:
+        title = posting[1]
+        if not _matches_role(title):
+            keyword_filtered += 1
+            continue
+        # The remote flag applies to the whole posting, which can also contain
+        # offices. Google's location note identifies the actual remote options.
+        note = unescape(re.sub(r"<[^>]+>", "\n", posting[18][1]))
+        remote_labels = re.findall(r"Remote location(?:s|\(s\))?:\s*([^\n]+)", note, re.IGNORECASE)
+        remote_us = [
+            label.strip().rstrip(".") for group in remote_labels for label in group.split(";")
+            if _is_us_workable(label)
+        ]
+        local_locations = [
+            location[0] for location in posting[9]
+            if isinstance(location, list) and location and isinstance(location[0], str)
+            and _is_pittsburgh_location(location[0])
+        ]
+        is_remote = posting[16] == 1 and bool(remote_us)
+        if not is_remote and not local_locations:
+            not_remote += 1
+            continue
+        location_labels = (["Remote - " + "; ".join(dict.fromkeys(remote_us))] if is_remote else [])
+        location_labels.extend(label for label in dict.fromkeys(local_locations) if label not in remote_us)
+        jobs.append({
+            "title": title, "company": company_name,
+            "location": "; ".join(location_labels),
+            "url": f"{search_url}{posting[0]}", "is_remote": int(is_remote),
+            "department": "", "description": None,
+            # These arrays have undocumented timestamp semantics; discovery
+            # time remains accurate without inventing a publication date.
+            "date_posted": None, "ats_updated_at": None,
+            "date_found": _now(), "last_seen": _now(), "source_url": careers_url,
+        })
+    return ScrapeResult(jobs, total_found=len(all_postings), not_remote=not_remote,
+                        keyword_filtered=keyword_filtered)
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -1058,6 +1304,10 @@ def scrape_company(company: dict) -> list[dict]:
         return scrape_clinchtalent(url, name)
     elif ats_type == "ashby":
         return scrape_ashby(company.get("board_id", name.lower()), name, url)
+    elif ats_type == "amazon":
+        return scrape_amazon(url, name)
+    elif ats_type == "google":
+        return scrape_google(url, name)
     else:
         message = (
             f"Unsupported ATS '{ats_type}' for {name}. Set a supported 'ats' "

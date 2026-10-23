@@ -1,5 +1,17 @@
 COMPANIES = [
     {
+        "name": "Amazon",
+        "brand_color": "#FF9900",
+        "careers_url": "https://www.amazon.jobs/en/search?country=USA&location%5B%5D=virtual-locations",
+        "ats": "amazon",
+    },
+    {
+        "name": "Google",
+        "brand_color": "#4285F4",
+        "careers_url": "https://www.google.com/about/careers/applications/jobs/results/?location=United+States&has_remote=true",
+        "ats": "google",
+    },
+    {
         "name": "Affirm",
         "brand_color": "#4A4AF4",
         "careers_url": "https://www.affirm.com/careers#jobOpenings",
