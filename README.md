@@ -9,7 +9,7 @@ workloads are stateless.
 
 - Scrapes career pages from a configurable list of companies
 - Filters for **remote US** roles in **software engineering, security engineering, SRE, DevOps, and IAM**
-- Also includes **Pittsburgh** locations at **Amazon and Google**, including onsite and hybrid roles (case-insensitive location matching)
+- Also includes **Pittsburgh** locations at **Amazon, Google, and Duolingo**, including onsite and hybrid roles (case-insensitive location matching)
 - Excludes senior/leadership titles (staff, principal, director, architect, manager)
 - Stores results in SQLite locally or DynamoDB on AWS, with deduplication and repost detection
 - Removes jobs only after successful company scans have not found them for 24 hours
@@ -24,6 +24,7 @@ workloads are stateless.
 |---|---|
 | Amazon | Custom Amazon Jobs JSON |
 | Google | Custom Google Careers |
+| Duolingo | Greenhouse (Pittsburgh enabled) |
 | Affirm | Greenhouse |
 | Airbnb | Greenhouse |
 | Coinbase | Greenhouse |
@@ -215,7 +216,13 @@ matching checks all listed locations, including secondary locations, without
 regard to case; mentioning Pittsburgh only in a title does not qualify. The
 existing title filters still apply. Onsite and hybrid Pittsburgh jobs are stored
 with `is_remote=0`; jobs with a verified US-remote option retain `is_remote=1`.
-All other companies keep their existing remote-US behavior.
+Duolingo uses the existing Greenhouse connector with `include_pittsburgh: True`
+in `config.py`, accepting Pittsburgh locations as well as remote-US jobs. Its
+location field can list multiple offices, such as `New York, NY; Pittsburgh, PA`;
+these Pittsburgh matches do not need an explicit US country label. The same
+title filters apply, and local jobs retain `is_remote=0` unless US-remote
+eligibility is also present. All other companies keep their existing remote-US
+behavior.
 
 A confirmed empty search is successful; request
 errors, unexpected response formats, incomplete pages, duplicate listings, or
@@ -293,8 +300,8 @@ GET /api/scans/latest
 For each successful company scan, the status reports the number of jobs returned
 by the configured ATS query, the number removed by include/exclude title terms,
 and the number removed by location eligibility checks. The existing API field
-`not_remote` is shown as **outside target locations** in the UI and CLI; Amazon
-and Google accept Pittsburgh locations as well as remote-US jobs. Keyword filtering runs
+`not_remote` is shown as **outside target locations** in the UI and CLI; Amazon,
+Google, and Duolingo accept Pittsburgh locations as well as remote-US jobs. Keyword filtering runs
 first, so the categories are mutually exclusive:
 
 ```text

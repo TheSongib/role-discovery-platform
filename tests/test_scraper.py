@@ -57,6 +57,32 @@ class GreenhouseRemoteFilteringTests(unittest.TestCase):
         }
 
     @patch("scraper.requests.get")
+    def test_pittsburgh_opt_in_accepts_local_jobs_and_preserves_remote_and_title_filters(self, mock_get):
+        mock_get.return_value = self._response([
+            self._job(1, "New York, NY; pItTsBuRgH, PA"),
+            self._job(2, "PITTSBURGH, PA", title="Software Engineer"),
+            self._job(3, "Remote - United States"),
+            self._job(4, "New York, NY", title="Software Engineer, Pittsburgh Team"),
+            self._job(5, "Pittsburgh, PA", title="Senior Software Engineer"),
+            self._job(6, "Remote - Canada"),
+        ])
+
+        jobs = scrape_greenhouse("duolingo", "Duolingo", "https://careers.duolingo.com/", include_pittsburgh=True)
+
+        self.assertEqual([job["is_remote"] for job in jobs], [0, 0, 1])
+        self.assertEqual(jobs[0]["location"], "New York, NY; pItTsBuRgH, PA")
+        self.assertEqual((jobs.total_found, jobs.keyword_filtered, jobs.not_remote), (6, 1, 2))
+
+    @patch("scraper.requests.get")
+    def test_pittsburgh_stays_excluded_for_other_greenhouse_boards(self, mock_get):
+        mock_get.return_value = self._response([self._job(1, "Pittsburgh, PA")])
+
+        jobs = scrape_greenhouse("example", "Example", "https://example.com/careers")
+
+        self.assertEqual(jobs, [])
+        self.assertEqual(jobs.not_remote, 1)
+
+    @patch("scraper.requests.get")
     def test_request_failure_is_reported_as_a_failed_scan(self, mock_get):
         mock_get.side_effect = requests.Timeout("request timed out")
 

@@ -12,6 +12,14 @@ COMPANIES = [
         "ats": "google",
     },
     {
+        "name": "Duolingo",
+        "brand_color": "#58CC02",
+        "careers_url": "https://careers.duolingo.com/?location=Pittsburgh%2C+PA",
+        "ats": "greenhouse",
+        "board_id": "duolingo",
+        "include_pittsburgh": True,
+    },
+    {
         "name": "Affirm",
         "brand_color": "#4A4AF4",
         "careers_url": "https://www.affirm.com/careers#jobOpenings",

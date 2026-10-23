@@ -31,6 +31,22 @@ NEW_COMPANIES = {
 
 
 class NewCompanyConfigTests(unittest.TestCase):
+    @patch("scraper.scrape_greenhouse", return_value=[])
+    def test_duolingo_enables_pittsburgh_matching_only_for_its_board(self, mock_greenhouse):
+        duolingo = next(company for company in COMPANIES if company["name"] == "Duolingo")
+        self.assertEqual(duolingo["ats"], "greenhouse")
+        self.assertEqual(duolingo["board_id"], "duolingo")
+
+        scrape_company(duolingo)
+
+        mock_greenhouse.assert_called_once_with(
+            "duolingo", "Duolingo", duolingo["careers_url"],
+            us_only=False, include_pittsburgh=True,
+        )
+        for company in COMPANIES:
+            if company["name"] != "Duolingo":
+                self.assertFalse(company.get("include_pittsburgh", False))
+
     def test_all_candidates_have_the_expected_ats_configuration(self):
         companies_by_name = {company["name"]: company for company in COMPANIES}
 

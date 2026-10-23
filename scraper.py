@@ -138,7 +138,10 @@ def _parse_ts(ts) -> str | None:
 # Greenhouse
 # ---------------------------------------------------------------------------
 
-def scrape_greenhouse(board_id: str, company_name: str, source_url: str, us_only: bool = False) -> list[dict]:
+def scrape_greenhouse(
+    board_id: str, company_name: str, source_url: str,
+    us_only: bool = False, include_pittsburgh: bool = False,
+) -> list[dict]:
     url = GREENHOUSE_API.format(board_id=board_id)
     print(f"  -> Greenhouse API: {url}")
 
@@ -179,10 +182,12 @@ def scrape_greenhouse(board_id: str, company_name: str, source_url: str, us_only
             continue
         # A country-only US location (e.g. "United States", no city) implies remote-eligible
         is_country_only_us = "," not in location and (_is_us_workable(location) or us_only)
-        if not meta_is_remote and not _is_remote(title, location) and not is_country_only_us:
-            not_remote += 1
-            continue
-        if not us_only and not _is_us_workable(location):
+        remote_us = (
+            (meta_is_remote or _is_remote(title, location) or is_country_only_us)
+            and (us_only or _is_us_workable(location))
+        )
+        local_match = include_pittsburgh and _is_pittsburgh_location(location)
+        if not remote_us and not local_match:
             not_remote += 1
             continue
 
@@ -194,7 +199,7 @@ def scrape_greenhouse(board_id: str, company_name: str, source_url: str, us_only
             "company": company_name,
             "location": location,
             "url": job_url,
-            "is_remote": 1,
+            "is_remote": int(remote_us),
             "department": department,
             "description": None,
             "date_posted": date_posted,
@@ -1289,7 +1294,10 @@ def scrape_company(company: dict) -> list[dict]:
         print(f"  ATS (detected): {ats_type}  board_id: {board_id or '—'}")
 
     if ats_type == "greenhouse":
-        return scrape_greenhouse(board_id, name, url, us_only=company.get("us_only", False))
+        return scrape_greenhouse(
+            board_id, name, url, us_only=company.get("us_only", False),
+            include_pittsburgh=company.get("include_pittsburgh", False),
+        )
     elif ats_type == "lever":
         return scrape_lever(board_id, name, url)
     elif ats_type == "eightfold":
